@@ -1,0 +1,265 @@
+/**
+ * Chapter 设计令牌。
+ * 浅色默认「夕阳暖黄」，深色为同色相「夜幕」。
+ * 与家族（Strata / Scheda / Vexa）共用一套圆角、间距、字号、缓动。
+ * 组件只引用变量，不写死颜色。
+ */
+
+:root {
+  --font-ui: "Microsoft YaHei UI", "PingFang SC", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-serif: "Source Han Serif SC", "Noto Serif SC", "Songti SC", "SimSun", serif;
+  --font-num: "Segoe UI", "Microsoft YaHei UI", var(--font-ui);
+
+  /* 圆角：小控件 6，按钮 8，面板 12，大容器 16，胶囊 999 */
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 22px;
+  --r-full: 999px;
+
+  /* 间距一律 4 的倍数 */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+  --sp-8: 64px;
+
+  /* 字号 12 / 13 / 14 / 16 / 20 / 26 / 34 */
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 20px;
+  --fs-2xl: 26px;
+  --fs-3xl: 34px;
+
+  --h-ctl: 32px;
+  --h-ctl-lg: 38px;
+
+  /* 动效三档 */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast: 120ms;
+  --dur: 180ms;
+  --dur-slow: 280ms;
+  --dur-in: 220ms;
+}
+
+/* ---------- 浅色：夕阳暖黄 ---------- */
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #faf5ec;
+  --surface: #fffdf8;
+  --surface-2: #f5eee2;
+  --surface-3: #ece0cf;
+
+  --border: #e8dcc8;
+  --border-strong: #d9c9ae;
+
+  --text: #2b2117;
+  --text-2: #6b5c4b;
+  --text-3: #9c8b78;
+  --text-4: #b9a992;
+
+  --hover: rgba(60, 40, 20, 0.05);
+  --pressed: rgba(60, 40, 20, 0.1);
+
+  --accent: #c96a1f;
+  --accent-hover: #b25b16;
+  --accent-active: #9d4f12;
+  --accent-light: #f0a34a;
+  --accent-soft: rgba(201, 106, 31, 0.12);
+  --accent-ring: rgba(201, 106, 31, 0.3);
+  --on-accent: #fffaf2;
+
+  --danger: #b23b32;
+  --danger-soft: rgba(178, 59, 50, 0.1);
+
+  /* 写字的纸永远是一张纸 */
+  --paper: #fffdf8;
+  --paper-line: #efe6d8;
+  --ink: #2b2117;
+  --ink-2: #6b5c4b;
+  --ink-3: #9c8b78;
+
+  --welcome-bg: #faf5ec;
+  --sun-a: rgba(246, 200, 122, 0.8);
+  --sun-b: #ffe9c4;
+  --ambient-hi: rgba(255, 253, 248, 0.94);
+
+  --glass-bg: rgba(255, 250, 242, 0.62);
+  --glass-border: rgba(255, 255, 255, 0.62);
+  --glass-hi: rgba(255, 255, 255, 0.7);
+  --glass-shade: rgba(242, 230, 210, 0.55);
+  --noise-opacity: 0.26;
+
+  --mask: rgba(43, 33, 23, 0.34);
+  --toast-bg: rgba(43, 33, 23, 0.92);
+  --toast-ink: #fffaf2;
+
+  --shadow-xs: 0 1px 1px rgba(80, 52, 24, 0.04);
+  --shadow-sm: 0 1px 3px rgba(80, 52, 24, 0.07);
+  --shadow-md: 0 8px 24px rgba(80, 52, 24, 0.1);
+  --shadow-lg: 0 24px 64px rgba(80, 52, 24, 0.2);
+}
+
+/* ---------- 深色：夜幕 ---------- */
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #1a1512;
+  --surface: #241d18;
+  --surface-2: #2e2620;
+  --surface-3: #3a2f26;
+
+  --border: #3a3027;
+  --border-strong: #4c3f33;
+
+  --text: #f2e9dd;
+  --text-2: #b3a392;
+  --text-3: #8a7a68;
+  --text-4: #6d6052;
+
+  --hover: rgba(255, 240, 220, 0.055);
+  --pressed: rgba(255, 240, 220, 0.1);
+
+  --accent: #f0a34a;
+  --accent-hover: #ffb968;
+  --accent-active: #d98a2e;
+  --accent-light: #ffc477;
+  --accent-soft: rgba(240, 163, 74, 0.15);
+  --accent-ring: rgba(240, 163, 74, 0.36);
+  --on-accent: #2a1a08;
+
+  --danger: #e2766f;
+  --danger-soft: rgba(226, 118, 111, 0.14);
+
+  --paper: #fffdf8;
+  --paper-line: #efe6d8;
+  --ink: #2b2117;
+  --ink-2: #6b5c4b;
+  --ink-3: #9c8b78;
+
+  --welcome-bg: #1a1512;
+  --sun-a: rgba(150, 92, 36, 0.42);
+  --sun-b: rgba(255, 196, 119, 0.1);
+  --ambient-hi: rgba(255, 240, 220, 0.045);
+
+  --glass-bg: rgba(40, 32, 26, 0.72);
+  --glass-border: rgba(255, 238, 214, 0.1);
+  --glass-hi: rgba(255, 238, 214, 0.12);
+  --glass-shade: rgba(20, 15, 12, 0.5);
+  --noise-opacity: 0.2;
+
+  --mask: rgba(0, 0, 0, 0.55);
+  --toast-bg: rgba(242, 233, 221, 0.94);
+  --toast-ink: #241d18;
+
+  --shadow-xs: 0 1px 1px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+
+/* ---------- 主题色：只换令牌，不换图片 ---------- */
+[data-theme="light"][data-accent="rust"],
+:root[data-accent="rust"] {
+  --accent: #b3593f;
+  --accent-hover: #9c4a33;
+  --accent-active: #87402c;
+  --accent-light: #e08a6d;
+  --accent-soft: rgba(179, 89, 63, 0.12);
+  --accent-ring: rgba(179, 89, 63, 0.3);
+  --on-accent: #fff8f3;
+  --sun-a: rgba(226, 158, 124, 0.72);
+  --sun-b: #ffe7d6;
+}
+[data-theme="light"][data-accent="olive"],
+:root[data-accent="olive"] {
+  --accent: #6f7d3c;
+  --accent-hover: #5e6b30;
+  --accent-active: #4f5a26;
+  --accent-light: #9aa863;
+  --accent-soft: rgba(111, 125, 60, 0.13);
+  --accent-ring: rgba(111, 125, 60, 0.3);
+  --on-accent: #fbfcef;
+  --sun-a: rgba(184, 198, 126, 0.68);
+  --sun-b: #eef2d2;
+}
+[data-theme="light"][data-accent="ocean"],
+:root[data-accent="ocean"] {
+  --accent: #2f7a83;
+  --accent-hover: #266970;
+  --accent-active: #1f585e;
+  --accent-light: #67aab0;
+  --accent-soft: rgba(47, 122, 131, 0.12);
+  --accent-ring: rgba(47, 122, 131, 0.3);
+  --on-accent: #f3fdfd;
+  --sun-a: rgba(140, 197, 202, 0.62);
+  --sun-b: #e3f2f2;
+}
+[data-theme="light"][data-accent="plum"],
+:root[data-accent="plum"] {
+  --accent: #8a5578;
+  --accent-hover: #774868;
+  --accent-active: #653b58;
+  --accent-light: #b982a6;
+  --accent-soft: rgba(138, 85, 120, 0.12);
+  --accent-ring: rgba(138, 85, 120, 0.3);
+  --on-accent: #fdf5fa;
+  --sun-a: rgba(208, 158, 188, 0.62);
+  --sun-b: #f6e5f0;
+}
+
+[data-theme="dark"][data-accent="rust"] {
+  --accent: #ec9a7c;
+  --accent-hover: #f4ae94;
+  --accent-active: #d98264;
+  --accent-light: #f3b69f;
+  --accent-soft: rgba(236, 154, 124, 0.15);
+  --accent-ring: rgba(236, 154, 124, 0.36);
+  --on-accent: #2b130c;
+  --sun-a: rgba(160, 82, 56, 0.4);
+  --sun-b: rgba(255, 186, 158, 0.1);
+}
+[data-theme="dark"][data-accent="olive"] {
+  --accent: #b9c47a;
+  --accent-hover: #c8d28d;
+  --accent-active: #a4b064;
+  --accent-light: #d0d8a2;
+  --accent-soft: rgba(185, 196, 122, 0.15);
+  --accent-ring: rgba(185, 196, 122, 0.36);
+  --on-accent: #1d220a;
+  --sun-a: rgba(100, 112, 52, 0.4);
+  --sun-b: rgba(214, 226, 154, 0.09);
+}
+[data-theme="dark"][data-accent="ocean"] {
+  --accent: #7fc7cd;
+  --accent-hover: #95d4d9;
+  --accent-active: #68b4bb;
+  --accent-light: #a9e0e4;
+  --accent-soft: rgba(127, 199, 205, 0.15);
+  --accent-ring: rgba(127, 199, 205, 0.36);
+  --on-accent: #081f21;
+  --sun-a: rgba(40, 100, 108, 0.4);
+  --sun-b: rgba(154, 224, 228, 0.09);
+}
+[data-theme="dark"][data-accent="plum"] {
+  --accent: #d7a5c7;
+  --accent-hover: #e3b9d6;
+  --accent-active: #c48fb3;
+  --accent-light: #ebcade;
+  --accent-soft: rgba(215, 165, 199, 0.15);
+  --accent-ring: rgba(215, 165, 199, 0.36);
+  --on-accent: #261220;
+  --sun-a: rgba(120, 62, 100, 0.4);
+  --sun-b: rgba(238, 198, 224, 0.09);
+}
