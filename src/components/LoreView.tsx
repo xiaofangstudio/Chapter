@@ -3,6 +3,7 @@ import type { Lore, LoreEntry, LoreKind } from "../types";
 import { LORE_KINDS } from "../types";
 import { t, tf } from "../lib/i18n";
 import { Icon } from "./Icon";
+import { LoreGraph } from "./LoreGraph";
 
 interface Props {
   lore: Lore;
@@ -10,12 +11,55 @@ interface Props {
   onEdit: (entry: LoreEntry) => void;
   onDelete: (entry: LoreEntry) => void;
   onInsert: (entry: LoreEntry) => void;
+  onSaveLore: (lore: Lore) => void;
 }
 
-export function LoreView({ lore, onAdd, onEdit, onDelete, onInsert }: Props) {
+export function LoreView({ lore, onAdd, onEdit, onDelete, onInsert, onSaveLore }: Props) {
   const [kind, setKind] = useState<LoreKind>("character");
+  const [mode, setMode] = useState<"cards" | "graph">("cards");
   const entries = lore.entries.filter((e) => e.kind === kind);
   const current = LORE_KINDS.find((k) => k.key === kind)!;
+
+  if (mode === "graph") {
+    return (
+      <div className="view-scroll lore-graph-view">
+        <div className="view-inner">
+          <div className="view-head">
+            <div>
+              <h2>{t("关系图谱")}</h2>
+              <p>{t("人物、地点各成一张网；拖动、连线、标色、皇冠和立绘都只保存在这本书里。")}</p>
+            </div>
+            <div className="segmini">
+              <button onClick={() => setMode("cards")}>{t("卡片")}</button>
+              <button className="on">{t("图谱")}</button>
+            </div>
+          </div>
+          <div className="lore-tabs" style={{ marginBottom: 14 }}>
+            {LORE_KINDS.map((k) => (
+              <button
+                key={k.key}
+                className={`chip${kind === k.key ? " on" : ""}`}
+                onClick={() => setKind(k.key)}
+              >
+                {t(k.label)}
+              </button>
+            ))}
+            <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-3)" }}>
+              {tf("共 {count} 条设定", { count: lore.entries.length })}
+            </span>
+          </div>
+          <LoreGraph
+            lore={lore}
+            kind={kind}
+            onSave={onSaveLore}
+            onEdit={onEdit}
+            onAdd={() => onAdd(kind)}
+            onDelete={onDelete}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="view-scroll">
@@ -25,11 +69,18 @@ export function LoreView({ lore, onAdd, onEdit, onDelete, onInsert }: Props) {
             <h2>{t("设定表")}</h2>
             <p>{t("人物、地点、物品，字段随你定。写正文时按下「设定」就能把名字插进去，不怕记混。")}</p>
           </div>
-          <button className="btn btn-primary" onClick={() => onAdd(kind)}>
-            <Icon name="plus" size={14} />
-            {t("新增")}{t(current.label)}
-          </button>
+          <div className="view-head-actions">
+            <button className="btn btn-ghost btn-xs" onClick={() => setMode("graph")}>
+              <Icon name="outline" size={13} />
+              {t("关系图谱")}
+            </button>
+            <button className="btn btn-primary" onClick={() => onAdd(kind)}>
+              <Icon name="plus" size={14} />
+              {t("新增")}{t(current.label)}
+            </button>
+          </div>
         </div>
+
 
         <div className="lore-tabs" style={{ marginBottom: 18 }}>
           {LORE_KINDS.map((k) => {

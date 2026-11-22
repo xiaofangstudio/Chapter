@@ -1,12 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import type { MutableRefObject } from "react";
+import type { CSSProperties, MutableRefObject } from "react";
 import type { BookMeta, Chapter } from "../types";
 import { countWords, countWordsChunked, escapeHtml, fmtNumber, fmtTime, fmtWords, htmlToMd, mdToHtml } from "../lib/text";
 import { t, tf } from "../lib/i18n";
 import { Icon } from "./Icon";
 
-export interface EditorHandle {
-  flush: () => string;
+interface Draft {
+  id: string;
+  title: string;
+  text: string;
+  at: number;
+}
+
+export interface EditorHandle {  flush: () => string;
   wordCount: () => number;
   insertText: (text: string) => void;
   focus: () => void;
@@ -16,6 +22,7 @@ interface Props {
   chapter: Chapter;
   body: string;
   meta: BookMeta;
+  bookPath: string;
   index: number;
   total: number;
   bookWords: number;
@@ -33,6 +40,7 @@ export function Editor({
   chapter,
   body,
   meta,
+  bookPath,
   index,
   total,
   bookWords,
@@ -62,6 +70,63 @@ export function Editor({
   const [empty, setEmpty] = useState(!body.trim());
   const [words, setWords] = useState(chapter.words || 0);
   const [fmt, setFmt] = useState({ bold: false, italic: false, quote: false });
+  const [fontSize, setFontSize] = useState(() => {
+    try {
+      const saved = Number(localStorage.getItem("chapter.editorFont"));
+      return saved >= 14 && saved <= 24 ? saved : 17;
+    } catch {
+      return 17;
+    }
+  });
+
+  const draftKey = `chapter.drafts:${bookPath}`;
+  const [drafts, setDrafts] = useState<Draft[]>(() => {
+    try {
+      const raw = localStorage.getItem(draftKey);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((d) => d && typeof d.text === "string") : [];
+    } catch {
+      return [];
+    }
+  });
+  const [draftOpen, setDraftOpen] = useState(false);
+  const [draftText, setDraftText] = useState("");
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(draftKey, JSON.stringify(drafts.slice(0, 200)));
+    } catch {
+      /* 本机存储不可用时不影响正文 */
+    }
+  }, [drafts, draftKey]);
+
+  const addDraft = () => {
+    const text = draftText.trim();
+    if (!text) return;
+    const first = text.split("\n").find((line) => line.trim())?.trim() || t("未命名草稿");
+    const draft: Draft = {
+      id: `d_${Date.now().toString(36)}`,
+      title: first.replace(/^#+\s*/, "").slice(0, 32),
+      text,
+      at: Date.now(),
+    };
+    setDrafts((list) => [draft, ...list]);
+    setDraftText("");
+  };
+
+  const insertDraft = (text: string) => {
+    apiRef.current?.insertText(text);
+    setDraftOpen(false);
+    onSave();
+  };
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("chapter.editorFont", String(fontSize));
+    } catch {
+      /* ignore */
+    }
+  }, [fontSize]);
 
   useEffect(() => {
     // 外部改名（书籍菜单 / 大纲墙）后同步回来；用户正在输入时不打扰光标
@@ -144,7 +209,12 @@ export function Editor({
           sel?.removeAllRanges();
           sel?.addRange(range);
         }
-        document.execCommand("insertText", false, text);
+        const blocks = text
+          .trim()
+          .split(/\n{2,}/)
+          .map((p) => `<p>${escapeHtml(p).replace(/\n/g, "<br>")}</p>`)
+          .join("");
+        document.execCommand("insertHTML", false, blocks);
         setEmpty(false);
         scheduleAutoSave();
       },
@@ -291,13 +361,44 @@ export function Editor({
           <span>{t("设定")}</span>
         </button>
         <span className="divider-v" />
-        <button className="tbtn" title="撤销 Ctrl+Z" onClick={() => run("undo")}>
+        <button
+          className={`tbtn${draftOpen ? " on" : ""}`}
+          title={t("草稿箱")}
+          onClick={() => setDraftOpen((v) => !v)}
+        >
+          <Icon name="file" size={16} />
+          <span>{t("草稿箱")}</span>
+          {drafts.length > 0 && <b className="draft-count">{drafts.length}</b>}
+        </button>
+        <button className="tbtn" title={t("撤销 Ctrl+Z")} onClick={() => run("undo")}>
           <Icon name="undo" size={16} />
         </button>
         <button className="tbtn" title="重做 Ctrl+Y" onClick={() => run("redo")}>
           <Icon name="redo" size={16} />
         </button>
         <span className="grow" />
+        <span className="font-step" title={t("正文基准字号")}>
+          <button
+            className="tbtn font-btn"
+            title={t("字号小一点")}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setFontSize((n) => Math.max(14, n - 1))}
+            disabled={fontSize <= 14}
+          >
+            A−
+          </button>
+          <span>{fontSize}</span>
+          <button
+            className="tbtn font-btn"
+            title={t("字号大一点")}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => setFontSize((n) => Math.min(24, n + 1))}
+            disabled={fontSize >= 24}
+          >
+            A+
+          </button>
+        </span>
+        <span className="divider-v" />
         <button className="tbtn" title={t("专注模式（隐藏所有面板）")} onClick={onToggleFocus}>
           <Icon name="focus" size={16} />
           <span>{t("专注")}</span>
@@ -305,7 +406,7 @@ export function Editor({
       </div>
 
       <div className="paper-scroll" ref={scrollRef}>
-        <article className="paper">
+        <article className="paper" style={{ "--editor-font": `${fontSize}px` } as CSSProperties}>
           <input
             className="ch-title"
             ref={titleRef}
@@ -377,9 +478,64 @@ export function Editor({
         </span>
         <span className="grow" />
         <span style={{ color: "var(--text-4)" }}>
-          Ctrl+S 保存 · Ctrl+B 加粗 · Ctrl+I 斜体
+          {t("Ctrl+S 保存 · Ctrl+B 加粗 · Ctrl+I 斜体")}
         </span>
       </footer>
+
+      {draftOpen && (
+        <aside className="draft-drawer" aria-label={t("草稿箱")}>
+          <header>
+            <div>
+              <b>{t("草稿箱")}</b>
+              <em>{tf("只存在这台电脑 · {count} 条", { count: drafts.length })}</em>
+            </div>
+            <button className="icon-btn" title={t("关闭")} onClick={() => setDraftOpen(false)}>
+              <Icon name="close" size={15} />
+            </button>
+          </header>
+          <div className="draft-new">
+            <textarea
+              value={draftText}
+              onChange={(e) => setDraftText(e.target.value)}
+              placeholder={t("把还没想好放哪儿的段落先丢进来……")}
+              rows={5}
+              spellCheck={false}
+            />
+            <div>
+              <span>{t("不会自动进正文，确认后再放。")}</span>
+              <button className="btn btn-primary btn-sm" onClick={addDraft} disabled={!draftText.trim()}>
+                <Icon name="plus" size={12} />
+                {t("存为草稿")}
+              </button>
+            </div>
+          </div>
+          <div className="draft-list">
+            {drafts.length === 0 && <p className="draft-empty">{t("还没有草稿。写一段，先存着。")}</p>}
+            {drafts.map((d) => (
+              <article className="draft-card" key={d.id}>
+                <header>
+                  <b>{d.title}</b>
+                  <span>{fmtTime(d.at)}</span>
+                </header>
+                <p>{d.text}</p>
+                <footer>
+                  <button className="btn btn-outline btn-sm" onClick={() => insertDraft(d.text)}>
+                    <Icon name="arrow" size={12} />
+                    {t("放进正文")}
+                  </button>
+                  <button
+                    className="draft-del"
+                    title={t("删除草稿")}
+                    onClick={() => setDrafts((list) => list.filter((x) => x.id !== d.id))}
+                  >
+                    <Icon name="trash" size={13} />
+                  </button>
+                </footer>
+              </article>
+            ))}
+          </div>
+        </aside>
+      )}
     </>
   );
 }

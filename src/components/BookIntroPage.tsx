@@ -15,6 +15,7 @@ interface Props {
   onBack: () => void;
   onSelectChapter: (id: string) => void;
   onBookSettings: () => void;
+  onMatter: () => void;
   onPickCover: () => void;
   onToggleTheme: () => void;
   onSettings: () => void;
@@ -141,6 +142,10 @@ export function BookIntroPage(props: Props) {
               <button className="btn btn-outline btn-lg" onClick={props.onBookSettings}>
                 <Icon name="edit" size={15} />
                 {t("书籍设置")}
+              </button>
+              <button className="btn btn-ghost btn-lg" onClick={props.onMatter}>
+                <Icon name="file" size={15} />
+                {t("副文本")}
               </button>
               <button className="btn btn-ghost btn-lg" onClick={props.onPickCover}>
                 <Icon name="image" size={15} />

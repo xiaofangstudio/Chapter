@@ -8,7 +8,7 @@ import type {
   SnapshotInfo,
 } from "../types";
 import { LORE_KINDS } from "../types";
-import { fmtNumber, fmtTime, fmtWords } from "../lib/text";
+import { fmtNumber, fmtTime, fmtWords, mdToHtml } from "../lib/text";
 import { t } from "../lib/i18n";
 import { Icon } from "./Icon";
 
@@ -60,6 +60,98 @@ export function Modal({
         {actions && <div className="modal-actions">{actions}</div>}
       </div>
     </div>
+  );
+}
+
+/* ───────────────── 副文本（前言 / 后记） ───────────────── */
+
+export function MatterDialog({
+  meta,
+  onClose,
+  onSave,
+}: {
+  meta: BookMeta;
+  onClose: () => void;
+  onSave: (patch: { frontMatter: string; backMatter: string }) => void;
+}) {
+  const [tab, setTab] = useState<"front" | "back">("front");
+  const [front, setFront] = useState(meta.frontMatter ?? "");
+  const [back, setBack] = useState(meta.backMatter ?? "");
+  const value = tab === "front" ? front : back;
+  const setValue = tab === "front" ? setFront : setBack;
+  const words = value.replace(/\s/g, "").length;
+
+  return (
+    <Modal
+      title={t("副文本")}
+      subtitle={t("前言、后记、附录都可以写在这里；用 Markdown，导出 TXT 时会自动转成纯文本。")}
+      onClose={onClose}
+      wider
+      actions={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>
+            {t("取消")}
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              onSave({ frontMatter: front, backMatter: back });
+              onClose();
+            }}
+          >
+            <Icon name="check" size={14} />
+            {t("保存副文本")}
+          </button>
+        </>
+      }
+    >
+      <div className="matter-tabs" role="tablist">
+        <button
+          className={`matter-tab${tab === "front" ? " on" : ""}`}
+          onClick={() => setTab("front")}
+        >
+          {t("前言 / 序言")}
+          {(meta.frontMatter ?? "").trim() && <i />}
+        </button>
+        <button
+          className={`matter-tab${tab === "back" ? " on" : ""}`}
+          onClick={() => setTab("back")}
+        >
+          {t("后记 / 附录")}
+          {(meta.backMatter ?? "").trim() && <i />}
+        </button>
+        <span className="grow" />
+        <span className="matter-mark">MARKDOWN · {words} {t("字")}</span>
+      </div>
+      <div className="matter-panes">
+        <div className="matter-editor">
+          <div className="matter-pane-head">
+            <span>{t("书写")}</span>
+            <em>{t("支持标题、引用、列表、粗体与分隔线")}</em>
+          </div>
+          <textarea
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            spellCheck={false}
+            placeholder={
+              tab === "front"
+                ? t("# 写在正文之前\n\n这段话会出现在所有章节前面。")
+                : t("# 写在正文之后\n\n后记、附录、致谢都可以放在这里。")
+            }
+          />
+        </div>
+        <div className="matter-preview">
+          <div className="matter-pane-head">
+            <span>{t("预览")}</span>
+            <em>{t("导出时保留 Markdown，转 TXT 自动清掉标记")}</em>
+          </div>
+          <div
+            className="matter-preview-body"
+            dangerouslySetInnerHTML={{ __html: mdToHtml(value) }}
+          />
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -327,6 +419,12 @@ const FORMATS = [
     desc: "去格式的干净正文，投稿、备份、发给别人看都省事。",
     icon: "type" as const,
   },
+  {
+    id: "print",
+    name: "自打印",
+    desc: "先排版再导出：纸张、字号、行距、分章、插图都自己定。",
+    icon: "image" as const,
+  },
 ];
 
 export function ExportDialog({
@@ -335,14 +433,17 @@ export function ExportDialog({
   words,
   onClose,
   onExport,
+  onPrint,
 }: {
   meta: BookMeta;
   chapters: number;
   words: number;
   onClose: () => void;
   onExport: (format: string) => void;
+  onPrint?: (format: "pdf" | "word") => void;
 }) {
   const [format, setFormat] = useState("epub");
+  const [printTarget, setPrintTarget] = useState<"pdf" | "word">("pdf");
 
   return (
     <Modal
@@ -355,9 +456,14 @@ export function ExportDialog({
           <button className="btn btn-ghost" onClick={onClose}>
             {t("取消")}
           </button>
-          <button className="btn btn-primary" onClick={() => onExport(format)}>
-            <Icon name="download" size={15} />
-            导出 {FORMATS.find((f) => f.id === format)?.name}
+          <button className="btn btn-primary" onClick={() => {
+            if (format === "print") onPrint?.(printTarget);
+            else onExport(format);
+          }}>
+            <Icon name={format === "print" ? "edit" : "download"} size={15} />
+            {format === "print"
+              ? t("进入排版")
+              : `导出 ${FORMATS.find((f) => f.id === format)?.name}`}
           </button>
         </>
       }
@@ -390,6 +496,33 @@ export function ExportDialog({
       {format === "epub" && !meta.cover && (
         <div style={{ fontSize: 11, color: "var(--text-3)", lineHeight: 1.7 }}>
           还没设封面。EPUB 会以标题页开头；在书籍菜单里设一张封面再导出会更完整。
+        </div>
+      )}
+
+      {format === "print" && (
+        <div className="print-target">
+          <button
+            className={`print-target-card${printTarget === "pdf" ? " on" : ""}`}
+            onClick={() => setPrintTarget("pdf")}
+          >
+            <span className="fmt-ico"><Icon name="file" size={16} /></span>
+            <span>
+              <b>PDF</b>
+              <em>{t("所见即所得，适合直接打印、投稿；插图会一起排进去。")}</em>
+            </span>
+            {printTarget === "pdf" && <Icon name="check" size={15} />}
+          </button>
+          <button
+            className={`print-target-card${printTarget === "word" ? " on" : ""}`}
+            onClick={() => setPrintTarget("word")}
+          >
+            <span className="fmt-ico"><Icon name="edit" size={16} /></span>
+            <span>
+              <b>Word</b>
+              <em>{t("导出可继续编辑的 .docx，分页、字体、插图都保留。")}</em>
+            </span>
+            {printTarget === "word" && <Icon name="check" size={15} />}
+          </button>
         </div>
       )}
     </Modal>
@@ -595,6 +728,7 @@ export function LoreEditorDialog({
   const save = () => {
     if (!name.trim()) return;
     onSave({
+      ...(entry ?? {}),
       id: entry?.id ?? `e_${Date.now()}`,
       kind: k,
       name: name.trim(),

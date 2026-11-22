@@ -10,6 +10,7 @@ import { WORLD_HOME_EXTRA } from "./i18n-world-home-extra";
 import { WORLD_STATS_PACKS } from "./i18n-world-stats";
 import { WORLD_RELATIVE_PACKS } from "./i18n-world-relative";
 import { ZH_HANT } from "./i18n-zh-hant";
+import { NEW_PACKS } from "./i18n-new";
 
 type Pack = Record<string, string>;
 
@@ -1041,6 +1042,7 @@ function rebuildPacks(auto: Record<string, Pack> = {}, extra: Record<string, Pac
       ...(WORLD_HOME_EXTRA[lang] ?? {}),
       ...(WORLD_STATS_PACKS[lang] ?? {}),
       ...(WORLD_RELATIVE_PACKS[lang] ?? {}),
+      ...(NEW_PACKS[lang] ?? {}),
       ...(lang === "zhTW" ? ZH_HANT : {}),
       ...(BASE_PACKS[lang as keyof typeof BASE_PACKS] ?? {}),
     };

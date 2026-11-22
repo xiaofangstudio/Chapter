@@ -22,6 +22,7 @@ interface Props {
   onImport: () => void;
   onBack: () => void;
   onBookSettings: () => void;
+  onMatter: () => void;
   onPickCover: () => void;
   onDeleteBook: () => void;
 }
@@ -44,6 +45,7 @@ export function TopBar(props: Props) {
     onImport,
     onBack,
     onBookSettings,
+    onMatter,
     onPickCover,
     onDeleteBook,
   } = props;
@@ -54,6 +56,7 @@ export function TopBar(props: Props) {
   const items: MenuItem[] = [
     { label: t("设置封面…"), icon: "image", onClick: onPickCover },
     { label: t("书籍设置…"), icon: "edit", onClick: onBookSettings },
+    { label: t("副文本 · Markdown…"), icon: "file", onClick: onMatter },
     { label: t("导入书稿…"), icon: "download", onClick: onImport },
     { label: t("版本与回档"), icon: "clock", onClick: onVersions },
     { label: t("版本历史"), icon: "file", onClick: onSnapshots },

@@ -74,6 +74,7 @@ export function escapeHtml(s: string): string {
 function inline(s: string): string {
   // 先转义再上标记，避免正文里的尖括号被当成标签
   return escapeHtml(s.trim())
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" loading="lazy">')
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
 }

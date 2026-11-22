@@ -856,9 +856,71 @@ fn strip_inline(s: &str) -> String {
             }
             continue;
         }
+        if c == '`' || c == '~' {
+            continue;
+        }
         out.push(c);
     }
     out
+}
+
+fn strip_md_links(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(pos) = rest.find('[') {
+        out.push_str(&rest[..pos]);
+        let tail = &rest[pos..];
+        let image = tail.starts_with("![");
+        let label_start = if image { 2 } else { 1 };
+        let close = match tail.find("](") {
+            Some(c) if c >= label_start => c,
+            _ => {
+                out.push('[');
+                rest = &tail[1..];
+                continue;
+            }
+        };
+        let after = &tail[close + 2..];
+        let end = match after.find(')') {
+            Some(e) => e,
+            None => {
+                out.push('[');
+                rest = &tail[1..];
+                continue;
+            }
+        };
+        out.push_str(&tail[label_start..close]);
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// TXT 用的纯文本化：标题、引用、列表、链接、图片、行内标记全部转成可读文字。
+fn strip_md_plain_line(line: &str) -> String {
+    let mut t = line.trim_end().to_string();
+    if t.trim_start().starts_with("```") || t.trim_start().starts_with("~~~") {
+        return String::new();
+    }
+    t = strip_md_links(&t);
+    let trimmed = t.trim_start();
+    let hashes = trimmed.chars().take_while(|c| *c == '#').count();
+    let body = if hashes > 0 && hashes <= 6 {
+        trimmed[hashes..].trim_start()
+    } else {
+        trimmed
+    };
+    let body = body.strip_prefix("> ").unwrap_or(body);
+    let body = if body.trim() == "---" || body.trim() == "***" || body.trim() == "___" {
+        ""
+    } else if let Some(rest) = body.strip_prefix("- ") {
+        rest
+    } else if let Some(rest) = body.strip_prefix("* ") {
+        rest
+    } else {
+        body
+    };
+    strip_inline(&strip_md_links(body))
 }
 
 fn strip_md_body(md: &str) -> String {
@@ -869,20 +931,20 @@ fn strip_md_body(md: &str) -> String {
             lines.push(String::new());
             continue;
         }
-        if t.starts_with("> ") {
-            lines.push(format!("　　{}", strip_inline(t[2..].trim())));
-        } else if t.trim() == "---" || t.trim() == "***" {
+        if t.starts_with('>') {
+            lines.push(format!("　　{}", strip_md_plain_line(t.trim_start_matches('>').trim())));
+        } else if t.trim() == "---" || t.trim() == "***" || t.trim() == "___" {
             lines.push(String::new());
         } else if t.starts_with("- ") || t.starts_with("* ") {
-            lines.push(format!("· {}", strip_inline(t[2..].trim())));
+            lines.push(format!("· {}", strip_md_plain_line(t[2..].trim())));
         } else {
             let ordered = t
                 .split_once(". ")
                 .filter(|(n, _)| n.chars().all(|c| c.is_ascii_digit()) && !n.is_empty())
-                .map(|(n, rest)| format!("{n}. {}", strip_inline(rest.trim())));
+                .map(|(n, rest)| format!("{n}. {}", strip_md_plain_line(rest.trim())));
             match ordered {
                 Some(x) => lines.push(x),
-                None => lines.push(strip_inline(t)),
+                None => lines.push(strip_md_plain_line(t)),
             }
         }
     }
@@ -890,25 +952,74 @@ fn strip_md_body(md: &str) -> String {
     format!("{}\n", joined.trim_matches('\n'))
 }
 
-fn build_markdown(project: &Path, title: &str, author: &str) -> String {
+fn build_markdown(project: &Path, title: &str, author: &str, plain: bool) -> String {
     let outline = load_outline(project);
-    let mut out = format!("# {}\n\n", title);
+    let book = read_json_value(&project.join(BOOK_FILE));
+    let front = book
+        .get("frontMatter")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let back = book
+        .get("backMatter")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let mut out = if plain {
+        format!("{}\n\n", title)
+    } else {
+        format!("# {}\n\n", title)
+    };
     if !author.trim().is_empty() {
-        out.push_str(&format!("> 作者：{}\n\n", author.trim()));
+        if plain {
+            out.push_str(&format!("作者：{}\n\n", author.trim()));
+        } else {
+            out.push_str(&format!("> 作者：{}\n\n", author.trim()));
+        }
+    }
+    if !front.is_empty() {
+        if plain {
+            out.push_str(&strip_md_body(&front));
+        } else {
+            out.push_str(&front);
+        }
+        out.push_str("\n\n");
     }
     for vol in &outline.volumes {
         if !vol.title.trim().is_empty() {
-            out.push_str(&format!("## {}\n\n", vol.title.trim()));
+            if plain {
+                out.push_str(&format!("{}\n\n", vol.title.trim()));
+            } else {
+                out.push_str(&format!("## {}\n\n", vol.title.trim()));
+            }
         }
         for ch in &vol.chapters {
             let body = read_chapter_body(&chapters_dir(project).join(format!("{}.md", ch.id)));
-            out.push_str(&format!("### {}\n\n", ch.title.trim()));
-            let clean = strip_md_body(&body);
-            if !clean.trim().is_empty() {
-                out.push_str(&clean);
+            if plain {
+                out.push_str(&format!("{}\n\n", ch.title.trim()));
+            } else {
+                out.push_str(&format!("### {}\n\n", ch.title.trim()));
+            }
+            let content = if plain {
+                strip_md_body(&body)
+            } else {
+                format!("{}\n", body.trim())
+            };
+            if !content.trim().is_empty() {
+                out.push_str(&content);
                 out.push('\n');
             }
         }
+    }
+    if !back.is_empty() {
+        if plain {
+            out.push_str(&strip_md_body(&back));
+        } else {
+            out.push_str(&back);
+        }
+        out.push('\n');
     }
     out
 }
@@ -1186,6 +1297,38 @@ ul, ol { margin: .6em 0 .9em 1.6em; }
 
     let mut manifest = String::new();
     let mut spine = String::new();
+    let book = read_json_value(&project.join(BOOK_FILE));
+    let front = book
+        .get("frontMatter")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let back = book
+        .get("backMatter")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+
+    if !front.is_empty() {
+        let page = format!(
+            r#"<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="zh-CN">
+<head><meta charset="utf-8"/><title>前言</title><link rel="stylesheet" type="text/css" href="style.css"/></head>
+<body><h2>前言</h2>{}</body></html>"#,
+            md_to_xhtml(&front)
+        );
+        add_zip_file(
+            &mut zip,
+            "OEBPS/front.xhtml",
+            page.as_bytes(),
+            CompressionMethod::Deflated,
+        )?;
+        manifest.push_str("    <item id=\"front\" href=\"front.xhtml\" media-type=\"application/xhtml+xml\"/>\n");
+        spine.push_str("    <itemref idref=\"front\"/>\n");
+    }
 
     for (i, (_vol, ch_title, body)) in flat.iter().enumerate() {
         let name = format!("chap_{:03}.xhtml", i + 1);
@@ -1217,7 +1360,30 @@ ul, ol { margin: .6em 0 .9em 1.6em; }
     }
 
     // 目录：卷分组 + 章链接
+    if !back.is_empty() {
+        let page = format!(
+            r#"<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="zh-CN">
+<head><meta charset="utf-8"/><title>后记</title><link rel="stylesheet" type="text/css" href="style.css"/></head>
+<body><h2>后记</h2>{}</body></html>"#,
+            md_to_xhtml(&back)
+        );
+        add_zip_file(
+            &mut zip,
+            "OEBPS/back.xhtml",
+            page.as_bytes(),
+            CompressionMethod::Deflated,
+        )?;
+        manifest.push_str("    <item id=\"back\" href=\"back.xhtml\" media-type=\"application/xhtml+xml\"/>\n");
+        spine.push_str("    <itemref idref=\"back\"/>\n");
+    }
+
+    // 目录：卷分组 + 章链接
     let mut nav_body = String::new();
+    if !front.is_empty() {
+        nav_body.push_str("    <li><a href=\"front.xhtml\">前言</a></li>\n");
+    }
     let mut index = 0usize;
     for vol in &outline.volumes {
         let chapters: Vec<&OutlineChapter> = vol.chapters.iter().collect();
@@ -1261,9 +1427,14 @@ ul, ol { margin: .6em 0 .9em 1.6em; }
 <h2>目录</h2>
 <nav epub:type="toc" id="toc">
   <ul>
-{nav_body}  </ul>
+{nav_body}{back_nav}  </ul>
 </nav>
-</body></html>"#
+</body></html>"#,
+        back_nav = if back.is_empty() {
+            String::new()
+        } else {
+            "    <li><a href=\"back.xhtml\">后记</a></li>\n".to_string()
+        }
     );
     add_zip_file(
         &mut zip,
@@ -1414,9 +1585,444 @@ ul, ol { margin: .6em 0 .9em 1.6em; }
     ))
 }
 
+// ───────────────────────── 自打印：PDF / Word ─────────────────────────
+
+#[derive(Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PrintBlock {
+    kind: String,
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    src: String,
+    #[serde(default)]
+    width: f64,
+    #[serde(default)]
+    height: f64,
+    #[serde(default)]
+    page_break: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PrintDoc {
+    paper: String,
+    margin: String,
+    font: String,
+    font_size: f64,
+    line_height: f64,
+    indent: f64,
+    #[serde(default)]
+    chapter_break: bool,
+    #[serde(default)]
+    include_matter: bool,
+    title: String,
+    author: String,
+    blocks: Vec<PrintBlock>,
+}
+
+fn print_paper_mm(name: &str) -> (f64, f64) {
+    match name {
+        "A5" => (148.0, 210.0),
+        "B5" => (176.0, 250.0),
+        "16K" => (184.0, 260.0),
+        _ => (210.0, 297.0),
+    }
+}
+
+fn print_margin_mm(name: &str) -> f64 {
+    match name {
+        "narrow" => 14.0,
+        "wide" => 28.0,
+        _ => 22.0,
+    }
+}
+
+fn print_pdf_html(doc: &PrintDoc) -> String {
+    let (pw, ph) = print_paper_mm(&doc.paper);
+    let margin = print_margin_mm(&doc.margin);
+    let family = if doc.font == "sans" {
+        "\"Microsoft YaHei\",\"PingFang SC\",\"Noto Sans CJK SC\",sans-serif"
+    } else {
+        "\"Noto Serif CJK SC\",\"Songti SC\",\"SimSun\",serif"
+    };
+    let mut body = String::new();
+    let mut i = 0usize;
+    while i < doc.blocks.len() {
+        let b = &doc.blocks[i];
+        match b.kind.as_str() {
+            "title" => {
+                let mut author = String::new();
+                if i + 1 < doc.blocks.len() && doc.blocks[i + 1].kind == "author" {
+                    author = doc.blocks[i + 1].text.clone();
+                    i += 1;
+                }
+                body.push_str(&format!(
+                    "<div class=\"cover\"><div class=\"cover-title\">{}</div>{}{}<span>CHAPTER</span></div>",
+                    xml_escape(&b.text),
+                    if author.is_empty() {
+                        String::new()
+                    } else {
+                        format!("<div class=\"cover-author\">{}</div>", xml_escape(&author))
+                    },
+                    ""
+                ));
+            }
+            "author" => {}
+            "pagebreak" => body.push_str("<div class=\"pagebreak\"></div>"),
+            "heading" => body.push_str(&format!(
+                "<h2 class=\"chapter{}\">{}</h2>",
+                if b.page_break { " newpage" } else { "" },
+                xml_escape(&b.text)
+            )),
+            "kicker" => body.push_str(&format!(
+                "<h3 class=\"kicker\">{}</h3>",
+                xml_escape(&b.text)
+            )),
+            "quote" => body.push_str(&format!("<blockquote>{}</blockquote>", xml_escape(&b.text))),
+            "image" => body.push_str(&format!(
+                "<img class=\"inline-img\" src=\"{}\" alt=\"\">",
+                xml_escape(&b.src)
+            )),
+            _ => body.push_str(&format!("<p>{}</p>", xml_escape(&b.text))),
+        }
+        i += 1;
+    }
+    format!(
+        "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><title>{}</title><style>\
+         @page {{ size: {}mm {}mm; margin: {}mm; }}\
+         * {{ box-sizing: border-box; }}\
+         html, body {{ margin: 0; padding: 0; background: #fff; }}\
+         body {{ font-family: {}; font-size: {}pt; line-height: {}; color: #24221e; text-align: justify; -webkit-print-color-adjust: exact; }}\
+         .cover {{ height: {}mm; display: flex; flex-direction: column; align-items: center; justify-content: center; page-break-after: always; }}\
+         .cover-title {{ font-size: {}pt; font-weight: 600; letter-spacing: 0.08em; line-height: 1.3; text-align: center; }}\
+         .cover-author {{ margin-top: 8mm; font-size: {}pt; letter-spacing: 0.16em; color: #5d5750; }}\
+         .cover span {{ margin-top: auto; font-size: 8pt; letter-spacing: 0.18em; color: #9a938a; }}\
+         h2.chapter {{ font-size: {}pt; font-weight: 600; text-align: center; margin: 4mm 0 5mm; line-height: 1.35; letter-spacing: 0.05em; }}\
+         h2.chapter.newpage {{ page-break-before: always; }}\
+         h3.kicker {{ font-size: {}pt; font-weight: 500; text-align: center; color: #6a6258; margin: 2mm 0 3mm; }}\
+         p {{ margin: 0 0 0.68em; text-indent: {}em; orphans: 2; widows: 2; }}\
+         blockquote {{ margin: 0.6em 0; padding-left: 4mm; border-left: 0.6mm solid #b9afa2; color: #5e574f; }}\
+         img.inline-img {{ display: block; max-width: 100%; margin: 3mm auto 4mm; }}\
+         .pagebreak {{ page-break-after: always; height: 0; }}\
+         </style></head><body>{}</body></html>",
+        xml_escape(&doc.title),
+        pw,
+        ph,
+        margin,
+        family,
+        doc.font_size,
+        doc.line_height,
+        ph - margin * 2.0,
+        doc.font_size * 2.4,
+        doc.font_size * 1.1,
+        doc.font_size * 1.5,
+        doc.font_size * 0.92,
+        doc.indent,
+        body
+    )
+}
+
+fn edge_binary() -> Option<PathBuf> {
+    let candidates = [
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    ];
+    for c in candidates {
+        let p = PathBuf::from(c);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+fn print_pdf(doc: &PrintDoc, dest: &Path) -> Result<(), String> {
+    let edge = edge_binary().ok_or("没有找到 Microsoft Edge，无法生成 PDF")?;
+    let stamp = now_ms();
+    let tmp = std::env::temp_dir().join(format!("chapter-print-{}", stamp));
+    ensure_dir(&tmp)?;
+    let html_path = tmp.join("print.html");
+    write_text(&html_path, &print_pdf_html(doc))?;
+    let file_url = format!(
+        "file:///{}",
+        html_path
+            .to_string_lossy()
+            .replace('\\', "/")
+            .replace(' ', "%20")
+    );
+    let out = Command::new(edge)
+        .args([
+            "--headless=new",
+            "--disable-gpu",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--no-pdf-header-footer",
+            "--print-to-pdf-no-header",
+            &format!("--print-to-pdf={}", dest.to_string_lossy()),
+            &file_url,
+        ])
+        .output()
+        .map_err(|e| format!("启动 Edge 失败：{}", e))?;
+    let _ = fs::remove_dir_all(&tmp);
+    if !out.status.success() {
+        let tail = String::from_utf8_lossy(&out.stderr);
+        return Err(format!(
+            "PDF 生成失败：{}",
+            tail.chars().rev().take(300).collect::<String>().chars().rev().collect::<String>()
+        ));
+    }
+    let size = fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
+    if size == 0 {
+        return Err("PDF 生成失败：输出为空".into());
+    }
+    Ok(())
+}
+
+fn docx_run(text: &str, size: f64, bold: bool, italic: bool, font: &str) -> String {
+    let font = if font == "sans" { "微软雅黑" } else { "宋体" };
+    format!(
+        "<w:r><w:rPr><w:rFonts w:ascii=\"{f}\" w:eastAsia=\"{f}\" w:hAnsi=\"{f}\"/>{} {} {}</w:rPr><w:t xml:space=\"preserve\">{}</w:t></w:r>",
+        size * 2.0,
+        if bold { "<w:b/>" } else { "" },
+        if italic { "<w:i/>" } else { "" },
+        xml_escape(text),
+        f = font,
+    )
+}
+
+fn docx_p(
+    inner: &str,
+    align: &str,
+    after: f64,
+    line: f64,
+    first_line_twips: f64,
+    page_break: bool,
+) -> String {
+    format!(
+        "<w:p><w:pPr>{}<w:jc w:val=\"{}\"/><w:spacing w:after=\"{}\" w:line=\"{}\" w:lineRule=\"auto\"/>{} </w:pPr>{}</w:p>",
+        if page_break { "<w:pageBreakBefore/>" } else { "" },
+        align,
+        (after * 240.0) as i64,
+        (line * 240.0) as i64,
+        if first_line_twips > 0.0 {
+            format!("<w:ind w:firstLine=\"{}\"/>", first_line_twips as i64)
+        } else {
+            String::new()
+        },
+        inner
+    )
+}
+
+fn data_url_bytes(src: &str) -> Option<(Vec<u8>, String)> {
+    let rest = src.strip_prefix("data:")?;
+    let semi = rest.find(';')?;
+    let mime = &rest[..semi];
+    let b64 = rest.splitn(2, "base64,").nth(1)?;
+    let ext = match mime {
+        "image/jpeg" => "jpeg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        _ => "png",
+    };
+    B64.decode(b64).ok().map(|b| (b, ext.to_string()))
+}
+
+fn print_docx(doc: &PrintDoc, dest: &Path) -> Result<(), String> {
+    let (pw, ph) = print_paper_mm(&doc.paper);
+    let margin = print_margin_mm(&doc.margin);
+    let content_twips = (pw - margin * 2.0) * 56.6929;
+    let mut media: Vec<(String, Vec<u8>, String)> = Vec::new();
+    let mut rels = String::new();
+    let mut paras = String::new();
+    let mut i = 0usize;
+    let mut pic_id = 0;
+    while i < doc.blocks.len() {
+        let b = &doc.blocks[i];
+        match b.kind.as_str() {
+            "title" => {
+                let mut author = String::new();
+                if i + 1 < doc.blocks.len() && doc.blocks[i + 1].kind == "author" {
+                    author = doc.blocks[i + 1].text.clone();
+                    i += 1;
+                }
+                let run = docx_run(&b.text, doc.font_size * 2.4, true, false, &doc.font);
+                paras.push_str(&docx_p(&run, "center", 0.8, 1.3, 0.0, false));
+                if !author.is_empty() {
+                    let arun = docx_run(&author, doc.font_size * 1.05, false, false, &doc.font);
+                    paras.push_str(&docx_p(&arun, "center", 0.6, 1.2, 0.0, false));
+                }
+                paras.push_str(&docx_p(
+                    "<w:r><w:br w:type=\"page\"/></w:r>",
+                    "left",
+                    0.0,
+                    1.0,
+                    0.0,
+                    false,
+                ));
+            }
+            "author" => {}
+            "pagebreak" => paras.push_str(&docx_p(
+                "<w:r><w:br w:type=\"page\"/></w:r>",
+                "left",
+                0.0,
+                1.0,
+                0.0,
+                false,
+            )),
+            "heading" => {
+                let run = docx_run(&b.text, doc.font_size * 1.45, true, false, &doc.font);
+                paras.push_str(&docx_p(&run, "center", 0.9, 1.35, 0.0, b.page_break));
+            }
+            "kicker" => {
+                let run = docx_run(&b.text, doc.font_size * 0.9, false, false, &doc.font);
+                paras.push_str(&docx_p(&run, "center", 0.5, 1.2, 0.0, false));
+            }
+            "quote" => {
+                let run = docx_run(&b.text, doc.font_size, false, true, &doc.font);
+                paras.push_str(&docx_p(&run, "both", 0.4, doc.line_height, doc.font_size * 2.0, false));
+            }
+            "image" => {
+                if let Some((bytes, ext)) = data_url_bytes(&b.src) {
+                    pic_id += 1;
+                    let rid = format!("rIdImg{}", pic_id);
+                    let name = format!("image{}.{}", pic_id, ext);
+                    let ctype = if ext == "jpg" { "jpeg" } else { ext.as_str() };
+                    rels.push_str(&format!(
+                        "<Relationship Id=\"{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/{}\"/>",
+                        rid, name
+                    ));
+                    media.push((name.clone(), bytes, ctype.to_string()));
+                    let mut cx = b.width * 9525.0;
+                    let mut cy = b.height * 9525.0;
+                    if cx <= 0.0 || cy <= 0.0 {
+                        cx = content_twips * 635.0;
+                        cy = cx * 0.66;
+                    }
+                    let max_cx = content_twips * 635.0;
+                    if cx > max_cx {
+                        cy *= max_cx / cx;
+                        cx = max_cx;
+                    }
+                    paras.push_str(&format!(
+                        "<w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:before=\"120\" w:after=\"180\"/></w:pPr><w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\"><wp:extent cx=\"{cx}\" cy=\"{cy}\"/><wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/><wp:docPr id=\"{pid}\" name=\"Picture {pid}\"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" noChangeAspect=\"1\"/></wp:cNvGraphicFramePr><a:graphic xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:pic xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:nvPicPr><pic:cNvPr id=\"{pid}\" name=\"{name}\"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed=\"{rid}\"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{cx}\" cy=\"{cy}\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>",
+                        cx = cx as i64,
+                        cy = cy as i64,
+                        pid = pic_id,
+                        name = name,
+                        rid = rid,
+                    ));
+                }
+            }
+            _ => {
+                let run = docx_run(&b.text, doc.font_size, false, false, &doc.font);
+                paras.push_str(&docx_p(
+                    &run,
+                    "both",
+                    0.2,
+                    doc.line_height,
+                    doc.indent * doc.font_size * 20.0,
+                    false,
+                ));
+            }
+        }
+        i += 1;
+    }
+
+    let document = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
+         xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" \
+         xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
+         xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
+         xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
+         <w:body>{}\
+         <w:sectPr><w:pgSz w:w=\"{}\" w:h=\"{}\"/><w:pgMar w:top=\"{}\" w:right=\"{}\" w:bottom=\"{}\" w:left=\"{}\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/><w:cols w:space=\"720\"/><w:docGrid w:linePitch=\"312\"/></w:sectPr>\
+         </w:body></w:document>",
+        paras,
+        (pw * 56.6929) as i64,
+        (ph * 56.6929) as i64,
+        (margin * 56.6929) as i64,
+        (margin * 56.6929) as i64,
+        (margin * 56.6929) as i64,
+        (margin * 56.6929) as i64,
+    );
+
+    let mut defaults = String::new();
+    let mut exts = vec!["png", "jpeg", "gif", "webp"];
+    for (_, _, ct) in &media {
+        if ct == "jpeg" && !exts.contains(&"jpeg") {
+            exts.push("jpeg");
+        }
+    }
+    for e in exts {
+        defaults.push_str(&format!(
+            "<Default Extension=\"{}\" ContentType=\"image/{}\"/>",
+            e,
+            if e == "jpg" { "jpeg" } else { e }
+        ));
+    }
+    let content_types = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
+         <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
+         <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
+         {}<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
+         </Types>",
+        defaults
+    );
+    let root_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
+         <Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>\
+         </Relationships>";
+    let doc_rels = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+         <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">{}</Relationships>",
+        rels
+    );
+
+    let file = File::create(dest).map_err(|e| format!("创建 Word 失败：{}", e))?;
+    let mut zip = ZipWriter::new(file);
+    let opt = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    for (name, data) in [
+        ("[Content_Types].xml", content_types.as_bytes()),
+        ("_rels/.rels", root_rels.as_bytes()),
+        ("word/document.xml", document.as_bytes()),
+        ("word/_rels/document.xml.rels", doc_rels.as_bytes()),
+    ] {
+        zip.start_file(name, opt).map_err(|e| e.to_string())?;
+        zip.write_all(data).map_err(|e| e.to_string())?;
+    }
+    for (name, bytes, _) in &media {
+        zip.start_file(format!("word/media/{}", name), opt)
+            .map_err(|e| e.to_string())?;
+        zip.write_all(bytes).map_err(|e| e.to_string())?;
+    }
+    zip.finish().map_err(|e| format!("写入 Word 失败：{}", e))?;
+    Ok(())
+}
+
 #[tauri::command]
-fn export_book(path: String, format: String, dest: String) -> Result<String, String> {
-    let project = PathBuf::from(&path);
+fn print_export(doc: PrintDoc, dest: String, format: String) -> Result<String, String> {
+    let target = PathBuf::from(&dest);
+    if let Some(parent) = target.parent() {
+        ensure_dir(parent)?;
+    }
+    match format.as_str() {
+        "pdf" => {
+            print_pdf(&doc, &target)?;
+            Ok("已导出 PDF".into())
+        }
+        "word" => {
+            print_docx(&doc, &target)?;
+            Ok("已导出 Word".into())
+        }
+        _ => Err("不支持的打印格式".into()),
+    }
+}
+
+#[tauri::command]
+fn export_book(path: String, format: String, dest: String) -> Result<String, String> {    let project = PathBuf::from(&path);
     if !project.is_dir() {
         return Err("找不到这本书".into());
     }
@@ -1438,24 +2044,12 @@ fn export_book(path: String, format: String, dest: String) -> Result<String, Str
 
     match format.as_str() {
         "txt" => {
-            let md = build_markdown(&project, &title, &author);
-            let plain: String = md
-                .lines()
-                .map(|l| {
-                    let t = l.trim_start_matches(|c| c == '#' || c == '>').trim();
-                    if t.is_empty() {
-                        String::new()
-                    } else {
-                        strip_inline(t)
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
+            let plain = build_markdown(&project, &title, &author, true);
             write_text(&target, &plain)?;
             Ok("已导出 TXT".into())
         }
         "md" => {
-            let md = build_markdown(&project, &title, &author);
+            let md = build_markdown(&project, &title, &author, false);
             write_text(&target, &md)?;
             Ok("已导出 Markdown".into())
         }
@@ -2888,6 +3482,7 @@ pub fn run() {
             list_snapshots,
             restore_snapshot,
             export_book,
+            print_export,
             count_text,
             read_import_file,
             image_data,
@@ -2941,7 +3536,7 @@ mod tests {
         fs::create_dir_all(&chapters).unwrap();
         fs::write(
             dir.join("book.json"),
-            r#"{"id":"b_test","title":"测试书","author":"小方"}"#,
+            r##"{"id":"b_test","title":"测试书","author":"小方","frontMatter":"# 前言\n\n写在前面。","backMatter":"# 后记\n\n写在后面。"}"##,
         )
         .unwrap();
         fs::write(
@@ -2961,8 +3556,77 @@ mod tests {
             "OEBPS/nav.xhtml",
             "OEBPS/title.xhtml",
             "OEBPS/chap_001.xhtml",
+            "OEBPS/front.xhtml",
+            "OEBPS/back.xhtml",
         ] {
             assert!(archive.by_name(name).is_ok(), "EPUB 缺少 {name}");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn txt_export_has_no_markdown_tokens() {
+        let dir = std::env::temp_dir().join(format!("chapter_txt_test_{}", now_ms()));
+        fs::create_dir_all(dir.join("chapters")).unwrap();
+        fs::write(
+            dir.join("book.json"),
+            r####"{"title":"测试书","author":"小方","frontMatter":"# 前言\n\n写在前面。","backMatter":"## 后记\n\n写在后面。"}"####,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("outline.json"),
+            r#"{"volumes":[{"title":"第一卷","chapters":[{"id":"c1","title":"第一章"}]}]}"#,
+        )
+        .unwrap();
+        fs::write(dir.join("chapters/c1.md"), "**粗体**和[链接](https://a.b)\n\n> 引用\n").unwrap();
+        let plain = build_markdown(&dir, "测试书", "小方", true);
+        assert!(!plain.contains('#'));
+        assert!(!plain.contains("**"));
+        assert!(!plain.contains("]("));
+        assert!(plain.starts_with("测试书\n\n作者：小方"));
+        let md = build_markdown(&dir, "测试书", "小方", false);
+        assert!(md.contains("# 测试书"));
+        assert!(md.contains("### 第一章"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn print_outputs_are_valid_files() {
+        let dir = std::env::temp_dir().join(format!("chapter_print_test_{}", now_ms()));
+        fs::create_dir_all(&dir).unwrap();
+        let doc = PrintDoc {
+            paper: "A4".into(),
+            margin: "normal".into(),
+            font: "serif".into(),
+            font_size: 11.0,
+            line_height: 1.75,
+            indent: 2.0,
+            chapter_break: true,
+            include_matter: true,
+            title: "测试书".into(),
+            author: "小方".into(),
+            blocks: vec![
+                PrintBlock { kind: "title".into(), text: "测试书".into(), src: String::new(), width: 0.0, height: 0.0, page_break: false },
+                PrintBlock { kind: "author".into(), text: "小方".into(), src: String::new(), width: 0.0, height: 0.0, page_break: false },
+                PrintBlock { kind: "pagebreak".into(), text: String::new(), src: String::new(), width: 0.0, height: 0.0, page_break: false },
+                PrintBlock { kind: "heading".into(), text: "第一章".into(), src: String::new(), width: 0.0, height: 0.0, page_break: false },
+                PrintBlock { kind: "p".into(), text: "这是一段正文。".into(), src: String::new(), width: 0.0, height: 0.0, page_break: false },
+                PrintBlock { kind: "image".into(), text: String::new(), src: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==".into(), width: 1.0, height: 1.0, page_break: false },
+            ],
+        };
+        let docx = dir.join("out.docx");
+        print_docx(&doc, &docx).unwrap();
+        let file = File::open(&docx).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+        let mut xml = String::new();
+        archive.by_name("word/document.xml").unwrap().read_to_string(&mut xml).unwrap();
+        assert!(xml.contains("第一章"));
+        assert!(xml.contains("word/media") || xml.contains("rIdImg1"));
+        assert!(archive.by_name("word/media/image1.png").is_ok());
+        if edge_binary().is_some() {
+            let pdf = dir.join("out.pdf");
+            print_pdf(&doc, &pdf).unwrap();
+            assert!(fs::metadata(&pdf).unwrap().len() > 10_000);
         }
         let _ = fs::remove_dir_all(&dir);
     }

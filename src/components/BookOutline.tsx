@@ -1,14 +1,17 @@
 import { useMemo, useRef, useState } from "react";
-import type { BookMeta, Chapter } from "../types";
+import type { BookMeta, Chapter, Outline } from "../types";
 import { countWords, fmtWords, mdToHtml } from "../lib/text";
 import { t } from "../lib/i18n";
 import { Icon } from "./Icon";
+import { StoryMap } from "./StoryMap";
 
 interface Props {
   meta: BookMeta;
   chapters: Chapter[];
   onChange: (md: string) => void;
   onSave: () => void;
+  outline: Outline;
+  onOpenChapter?: (id: string) => void;
 }
 
 type Block = {
@@ -39,10 +42,41 @@ function replaceRange(
   return { value: next, caret: start + before.length + selected.length + after.length };
 }
 
-export function BookOutline({ meta, chapters, onChange, onSave }: Props) {
+export function BookOutline({ meta, chapters, onChange, onSave, outline, onOpenChapter }: Props) {
   const value = meta.bookOutline ?? "";
   const [preview, setPreview] = useState(false);
+  const [mapMode, setMapMode] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const imageRef = useRef<HTMLInputElement>(null);
+
+  const insertImage = (file?: File) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, 1100 / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const data = canvas.toDataURL("image/jpeg", 0.86);
+        const ta = taRef.current;
+        if (!ta) return;
+        const at = ta.selectionStart;
+        const block = `\n\n![插图](${data})\n\n`;
+        onChange(value.slice(0, at) + block + value.slice(at));
+        requestAnimationFrame(() => {
+          ta.focus();
+          ta.setSelectionRange(at + block.length, at + block.length);
+        });
+      };
+      img.src = String(reader.result);
+    };
+    reader.readAsDataURL(file);
+  };
 
   const blocks: Block[] = useMemo(
     () => [
@@ -131,11 +165,32 @@ export function BookOutline({ meta, chapters, onChange, onSave }: Props) {
             {chapters.length} {t("章")} · {fmtWords(words)} {t("字")}
           </span>
           <div className="segmini">
-            <button className={!preview ? "on" : ""} onClick={() => setPreview(false)}>
+            <button
+              className={!preview && !mapMode ? "on" : ""}
+              onClick={() => {
+                setPreview(false);
+                setMapMode(false);
+              }}
+            >
               {t("编辑")}
             </button>
-            <button className={preview ? "on" : ""} onClick={() => setPreview(true)}>
+            <button
+              className={preview && !mapMode ? "on" : ""}
+              onClick={() => {
+                setPreview(true);
+                setMapMode(false);
+              }}
+            >
               {t("预览")}
+            </button>
+            <button
+              className={mapMode ? "on" : ""}
+              onClick={() => {
+                setMapMode(true);
+                setPreview(false);
+              }}
+            >
+              {t("故事网")}
             </button>
           </div>
           <button className="btn btn-ghost btn-xs" onClick={onSave} title="Ctrl+S">
@@ -145,7 +200,16 @@ export function BookOutline({ meta, chapters, onChange, onSave }: Props) {
         </div>
       </header>
 
-      <div className={`bookout-body${preview ? " preview" : ""}`}>
+      <div className={`bookout-body${preview ? " preview" : ""}${mapMode ? " map" : ""}`}>
+        {mapMode ? (
+          <StoryMap
+            bookId={meta.id}
+            chapters={chapters}
+            outline={outline}
+            onOpen={onOpenChapter}
+          />
+        ) : (
+          <>
         {!preview && (
           <aside className="bookout-palette">
             <div className="palette-title">{t("点一下就插入")}</div>
@@ -171,6 +235,25 @@ export function BookOutline({ meta, chapters, onChange, onSave }: Props) {
             ))}
             <div className="palette-divider" />
             <div className="palette-title">{t("整书骨架")}</div>
+            <button className="palette-item" onClick={() => imageRef.current?.click()}>
+              <span className="palette-ico">
+                <Icon name="image" size={14} />
+              </span>
+              <span className="palette-text">
+                <b>{t("插入插图")}</b>
+                <em>{t("人物关系、地图、场景草稿")}</em>
+              </span>
+            </button>
+            <input
+              ref={imageRef}
+              type="file"
+              accept="image/*"
+              hidden
+              onChange={(e) => {
+                insertImage(e.target.files?.[0]);
+                e.target.value = "";
+              }}
+            />
             <button
               className="palette-item"
               onClick={() => {
@@ -217,6 +300,8 @@ export function BookOutline({ meta, chapters, onChange, onSave }: Props) {
               </div>
             )}
           </section>
+        )}
+          </>
         )}
       </div>
     </div>

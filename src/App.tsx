@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -46,6 +47,7 @@ import {
   ExportDialog,
   LoreEditorDialog,
   LorePickerDialog,
+  MatterDialog,
   NewBookDialog,
   PromptDialog,
   SnapshotDialog,
@@ -53,6 +55,10 @@ import {
 } from "./components/Modals";
 import { CoverCropDialog } from "./components/CoverCropDialog";
 import { CoverPickerDialog } from "./components/CoverPickerDialog";
+
+const PrintStudio = lazy(() =>
+  import("./components/PrintStudio").then((m) => ({ default: m.PrintStudio })),
+);
 
 // 首屏只加载书架/工作台；写作视图、介绍页、大纲、设置、导入在真正打开时才取。
 const BookIntroPage = lazy(() =>
@@ -270,6 +276,8 @@ export default function App() {
     null,
   );
   const modalCloseTimer = useRef<number | undefined>(undefined);
+  const [matterDialog, setMatterDialog] = useState(false);
+  const [printStudio, setPrintStudio] = useState<null | "pdf" | "word">(null);
   const [settingsSection, setSettingsSection] = useState<
     "appearance" | "writing" | "ai" | "git" | "about"
   >("appearance");
@@ -365,6 +373,23 @@ export default function App() {
     [],
   );
 
+  const closeMatter = useCallback(() => {
+    if (document.documentElement.dataset.modalClosing === "1") return;
+    const calm =
+      document.documentElement.dataset.motion === "off" ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (calm) {
+      setMatterDialog(false);
+      return;
+    }
+    document.documentElement.dataset.modalClosing = "1";
+    window.clearTimeout(modalCloseTimer.current);
+    modalCloseTimer.current = window.setTimeout(() => {
+      document.documentElement.removeAttribute("data-modal-closing");
+      setMatterDialog(false);
+    }, 160);
+  }, []);
+
   const openSettings = useCallback(
     (section: "appearance" | "writing" | "ai" | "git" | "about" = "appearance") => {
       setSettingsSection(section);
@@ -390,6 +415,59 @@ export default function App() {
       /* ignore */
     }
   }, [theme, themeMode]);
+
+  useEffect(() => {
+    const win = getCurrentWindow();
+    let busy = false;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "F11") return;
+      e.preventDefault();
+      if (busy) return;
+      busy = true;
+      void win
+        .isFullscreen()
+        .then((on) => win.setFullscreen(!on))
+        .catch(() => {})
+        .finally(() => {
+          busy = false;
+        });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const toggleTheme = useCallback(() => {    const next = theme === "light" ? "dark" : "light";
+    const reduced =
+      document.documentElement.dataset.motion === "off" ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const doc = document as Document & {
+      startViewTransition?: (cb: () => void) => { ready: Promise<void> };
+    };
+    if (reduced || !doc.startViewTransition) {
+      setThemeMode(next);
+      return;
+    }
+    const transition = doc.startViewTransition(() => {
+      flushSync(() => setThemeMode(next));
+      document.documentElement.dataset.theme = next;
+    });
+    void transition.ready.then(() => {
+      const radius = Math.hypot(window.innerWidth, window.innerHeight);
+      document.documentElement.animate(
+        {
+          clipPath: [
+            "circle(0px at 88% 8%)",
+            `circle(${radius.toFixed(0)}px at 88% 8%)`,
+          ],
+        },
+        {
+          duration: 560,
+          easing: "cubic-bezier(0.22, 0.8, 0.24, 1)",
+          pseudoElement: "::view-transition-new(root)",
+        },
+      );
+    });
+  }, [theme]);
 
   useEffect(() => {
     document.documentElement.dataset.accent = accent;
@@ -787,6 +865,8 @@ export default function App() {
     setFocus(false);
     setView("write");
     setIntro(true);
+    setMatterDialog(false);
+    setPrintStudio(null);
     await api.mcpSetProject(null).catch(() => undefined);
     await refreshBooks();
   }, [refreshBooks, saveAll]);
@@ -987,13 +1067,25 @@ export default function App() {
   const addVolume = useCallback(() => {
     const p = projectRef.current;
     if (!p) return;
-    const id = `v_${Date.now()}`;
-    const title = `第${p.outline.volumes.length + 1}卷`;
-    applyOutline((o) => {
-      o.volumes.push({ id, title, collapsed: false, chapters: [] });
-      return o;
+    const fallback = `第${p.outline.volumes.length + 1}卷`;
+    setPrompt({
+      title: "新建一卷",
+      subtitle: "先给这一卷起个名字，再开始往里放章节。",
+      label: "卷名",
+      value: "",
+      placeholder: fallback,
+      confirmText: "创建",
+      onOk: (value) => {
+        const id = `v_${Date.now()}`;
+        const title = value.trim() || fallback;
+        applyOutline((o) => {
+          o.volumes.push({ id, title, collapsed: false, chapters: [] });
+          return o;
+        });
+        toast(`已新建「${title}」`);
+        setPrompt(null);
+      },
     });
-    toast("已新建一卷");
   }, [applyOutline, toast]);
 
   const addChapter = useCallback(
@@ -1330,7 +1422,17 @@ export default function App() {
           setConfirm(null);
           const p = projectRef.current;
           if (!p) return;
-          saveLore({ entries: p.lore.entries.filter((e) => e.id !== entry.id) });
+          saveLore({
+            ...p.lore,
+            entries: p.lore.entries.filter((e) => e.id !== entry.id),
+            relations: (p.lore.relations ?? []).filter(
+              (r) => r.from !== entry.id && r.to !== entry.id,
+            ),
+            worldMap: {
+              ...p.lore.worldMap,
+              pins: (p.lore.worldMap?.pins ?? []).filter((x) => x.entryId !== entry.id),
+            },
+          });
           toast("已删除设定");
         },
       });
@@ -1354,10 +1456,12 @@ export default function App() {
 
   const saveBookMeta = useCallback(
     async (patch: {
-      title: string;
-      author: string;
-      description: string;
+      title?: string;
+      author?: string;
+      description?: string;
       spineColor?: string;
+      frontMatter?: string;
+      backMatter?: string;
     }) => {
       const p = projectRef.current;
       if (!p) return;
@@ -1366,6 +1470,19 @@ export default function App() {
       persistJson("book.json", meta);
       await refreshBooks();
       toast("书籍信息已更新");
+    },
+    [commit, persistJson, refreshBooks, toast],
+  );
+
+  const saveMatter = useCallback(
+    async (patch: { frontMatter: string; backMatter: string }) => {
+      const p = projectRef.current;
+      if (!p) return;
+      const meta = { ...p.meta, ...patch, updatedAt: Date.now() };
+      commit({ ...p, meta });
+      persistJson("book.json", meta);
+      await refreshBooks();
+      toast("副文本已保存 · Markdown");
     },
     [commit, persistJson, refreshBooks, toast],
   );
@@ -1933,8 +2050,9 @@ export default function App() {
             onBack={backToShelf}
             onSelectChapter={(id) => void enterChapter(id)}
             onBookSettings={() => setMetaDialog(true)}
+            onMatter={() => setMatterDialog(true)}
             onPickCover={openCoverPicker}
-            onToggleTheme={() => setThemeMode(theme === "light" ? "dark" : "light")}
+            onToggleTheme={toggleTheme}
             onSettings={() => openSettings()}
             onAddVolume={addVolume}
           />
@@ -1950,7 +2068,7 @@ export default function App() {
             theme={theme}
             onView={changeView}
             onTogglePanel={() => setPanel((p) => !p)}
-            onToggleTheme={() => setThemeMode(theme === "light" ? "dark" : "light")}
+            onToggleTheme={toggleTheme}
             onSettings={() => openSettings()}
             onExport={() => {
               void saveAll(true);
@@ -1964,6 +2082,7 @@ export default function App() {
             onVersions={() => openSettings("git")}
             onBack={backToShelf}
             onBookSettings={() => setMetaDialog(true)}
+            onMatter={() => setMatterDialog(true)}
             onPickCover={openCoverPicker}
             onDeleteBook={deleteBook}
           />
@@ -1996,6 +2115,7 @@ export default function App() {
                     chapter={activeChapter}
                     body={project.bodies[activeChapter.id] ?? ""}
                     meta={project.meta}
+                    bookPath={project.path}
                     index={chapterIndex >= 0 ? chapterIndex : 0}
                     total={flat.length}
                     bookWords={bookWords}
@@ -2052,6 +2172,8 @@ export default function App() {
                   chapters={flat}
                   onChange={updateBookOutline}
                   onSave={saveBookOutlineNow}
+                  outline={project.outline}
+                  onOpenChapter={selectChapter}
                 />
               )}
 
@@ -2062,6 +2184,7 @@ export default function App() {
                   onEdit={(entry) => setLoreEdit({ entry, kind: entry.kind })}
                   onDelete={deleteLoreEntry}
                   onInsert={insertLore}
+                  onSaveLore={saveLore}
                 />
               )}
               </Suspense>
@@ -2126,7 +2249,7 @@ export default function App() {
           onImport={() => void pickImport("new")}
           onOpenFolder={openExisting}
           onSettings={() => openSettings()}
-          onToggleTheme={() => setThemeMode(theme === "light" ? "dark" : "light")}
+          onToggleTheme={toggleTheme}
           onMinimal={() => setHomeMode("minimal")}
           language={language}
         />
@@ -2181,7 +2304,7 @@ export default function App() {
             });
           }}
           onReveal={(b) => void revealItemInDir(b.path).catch(() => undefined)}
-          onToggleTheme={() => setThemeMode(theme === "light" ? "dark" : "light")}
+          onToggleTheme={toggleTheme}
           onSettings={() => openSettings()}
           language={language}
         />
@@ -2245,6 +2368,14 @@ export default function App() {
         />
       )}
 
+      {matterDialog && project && (
+        <MatterDialog
+          meta={project.meta}
+          onClose={closeMatter}
+          onSave={saveMatter}
+        />
+      )}
+
       {modal === "export" && project && (
         <ExportDialog
           meta={project.meta}
@@ -2252,6 +2383,10 @@ export default function App() {
           words={bookWords}
           onClose={closeModal}
           onExport={doExport}
+          onPrint={(f) => {
+            setPrintStudio(f);
+            closeModal();
+          }}
         />
       )}
 
@@ -2371,11 +2506,19 @@ export default function App() {
           }}
         />
       )}
+      {printStudio && project && (
+        <Suspense fallback={null}>
+          <PrintStudio
+            project={project}
+            target={printStudio}
+            initialChapter={activeId ?? undefined}
+            onClose={() => setPrintStudio(null)}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }
-
-/* 极简内联图标，避免为两个按钮多开依赖 */
 function IconPlus() {
   return (
     <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round">

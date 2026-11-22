@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import type { BookSummary, UiLanguage } from "../types";
-import { dateKey, fmtWords, relTime } from "../lib/text";
+import { dateKey, fmtWords, mdToHtml, relTime } from "../lib/text";
 import { t } from "../lib/i18n";
 import { companionDays, pickWelcome } from "../lib/welcome";
 import { Icon } from "./Icon";
@@ -66,17 +66,54 @@ function readPane(): WbPane {
 
 interface Note {
   id: string;
+  title: string;
   text: string;
   at: number;
+  pinned?: boolean;
+}
+
+function noteTitle(text: string): string {
+  const first = text
+    .split("\n")
+    .map((l) => l.replace(/^#+\s*/, "").trim())
+    .find(Boolean);
+  return (first || "未命名笔记").slice(0, 42);
 }
 
 function readNotes(): Note[] {
   try {
     const parsed = JSON.parse(readStorage(NOTES_KEY, "[]")) as Note[];
-    return Array.isArray(parsed) ? parsed.filter((n) => n && typeof n.text === "string") : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((n) => n && typeof n.text === "string")
+      .map((n, i) => ({
+        id: typeof n.id === "string" ? n.id : `n_${i}_${Date.now()}`,
+        title: typeof n.title === "string" && n.title.trim() ? n.title : noteTitle(n.text),
+        text: n.text,
+        at: typeof n.at === "number" ? n.at : Date.now(),
+        pinned: Boolean(n.pinned),
+      }));
   } catch {
     return [];
   }
+}
+
+function tagsOf(text: string): string[] {
+  const tags = new Set<string>();
+  for (const m of text.matchAll(/#([\p{L}\p{N}_-]{1,24})/gu)) tags.add(m[1]);
+  return Array.from(tags).slice(0, 12);
+}
+
+function noteSnippet(text: string): string {
+  return text
+    .replace(/^#+\s*/gm, "")
+    .replace(/!\[[^\]]*]\([^)]*\)/g, "")
+    .replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
+    .replace(/^[-*+]\s+/gm, "")
+    .replace(/(\*\*|__|\*|_|`|~~|>)/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 64);
 }
 
 function streakOf(log: Record<string, number>): number {
@@ -139,10 +176,16 @@ export function WorkspaceHome({
   const [stageOpen, setStageOpen] = useState(false);
   const [stageOrigin, setStageOrigin] = useState<DOMRect | null>(null);
   const [query, setQuery] = useState("");
+  const [shelfPage, setShelfPage] = useState(1);
+  const PAGE_SIZE = 24;
   const [notes, setNotes] = useState<Note[]>(readNotes);
-  const [draft, setDraft] = useState("");
+  const [selectedNote, setSelectedNote] = useState<string | null>(null);
+  const [noteSearch, setNoteSearch] = useState("");
+  const [notePreview, setNotePreview] = useState(true);
+  const [noteSavedAt, setNoteSavedAt] = useState(0);
   const bookCoverRef = useRef<HTMLDivElement | null>(null);
   const mainRef = useRef<HTMLDivElement | null>(null);
+  const noteBodyRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     setWelcome(pickWelcome());
@@ -160,8 +203,53 @@ export function WorkspaceHome({
   useEffect(() => () => window.clearTimeout(leaveTimer.current), []);
 
   useEffect(() => {
-    writeStorage(NOTES_KEY, JSON.stringify(notes));
+    const id = window.setTimeout(() => {
+      writeStorage(NOTES_KEY, JSON.stringify(notes));
+      setNoteSavedAt(Date.now());
+    }, 500);
+    return () => window.clearTimeout(id);
   }, [notes]);
+
+  useEffect(() => {
+    if (pane !== "notes") return;
+    if (selectedNote && notes.some((n) => n.id === selectedNote)) return;
+    setSelectedNote(notes[0]?.id ?? null);
+  }, [pane, notes, selectedNote]);
+
+  const orderedNotes = useMemo(() => {
+    const q = noteSearch.trim().toLowerCase();
+    const list = [...notes].sort(
+      (a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.at - a.at,
+    );
+    if (!q) return list;
+    return list.filter((n) => `${n.title}\n${n.text}`.toLowerCase().includes(q));
+  }, [notes, noteSearch]);
+
+  const activeNote = notes.find((n) => n.id === selectedNote) ?? null;
+  const activeTags = activeNote ? tagsOf(activeNote.text) : [];
+
+  const addNote = (seed = "") => {
+    const id = `n_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+    const note: Note = {
+      id,
+      title: seed ? noteTitle(seed) : "未命名笔记",
+      text: seed,
+      at: Date.now(),
+    };
+    setNotes((prev) => [note, ...prev]);
+    setSelectedNote(id);
+    setNoteSearch("");
+  };
+
+  const patchNote = (id: string, patch: Partial<Note>) => {
+    setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, ...patch } : n)));
+  };
+
+  const removeNote = (id: string) => {
+    const rest = notes.filter((n) => n.id !== id);
+    setNotes(rest);
+    if (selectedNote === id) setSelectedNote(rest[0]?.id ?? null);
+  };
 
   const days = useMemo(companionDays, []);
   const current = useMemo(() => {
@@ -248,23 +336,21 @@ export function WorkspaceHome({
     if (!q) return books;
     return books.filter((b) => `${b.title} ${b.author}`.toLowerCase().includes(q));
   }, [books, query]);
+  const shelfPageCount = Math.max(1, Math.ceil(shelfBooks.length / PAGE_SIZE));
+  const pagedShelf = useMemo(
+    () => shelfBooks.slice((shelfPage - 1) * PAGE_SIZE, shelfPage * PAGE_SIZE),
+    [shelfBooks, shelfPage],
+  );
+
+  useEffect(() => {
+    if (shelfPage > shelfPageCount) setShelfPage(shelfPageCount);
+  }, [shelfPage, shelfPageCount]);
 
   const togglePin = () => {
     if (!current) return;
     const next = isPinned ? "" : current.path;
     setPin(next);
     writeStorage(PIN_KEY, next);
-  };
-
-  const addNote = () => {
-    const text = draft.trim();
-    if (!text) return;
-    setNotes((list) => [{ id: `n_${Date.now()}`, text, at: Date.now() }, ...list]);
-    setDraft("");
-  };
-
-  const removeNote = (id: string) => {
-    setNotes((list) => list.filter((n) => n.id !== id));
   };
 
   const paneMeta = PANE_META[pane];
@@ -553,7 +639,10 @@ which === "home" ? (
                   <Icon name="search" size={14} className="wb-search-icon" />
                   <input
                     value={query}
-                    onChange={(e) => setQuery(e.target.value)}
+                    onChange={(e) => {
+                      setQuery(e.target.value);
+                      setShelfPage(1);
+                    }}
                     placeholder={t("搜索书名或笔名")}
                   />
                 </label>
@@ -575,8 +664,9 @@ which === "home" ? (
                 <p>{books.length ? t("换个关键词试试。") : t("新建一本，或者把已有的 TXT / Markdown / Word 导入。")}</p>
               </div>
             ) : (
+              <>
               <div className="wb-shelf-grid">
-                {shelfBooks.map((b) => (
+                {pagedShelf.map((b) => (
                   <button key={b.path} className="wb-shelf-card" onClick={() => onOpen(b)}>
                     <div className="wb-shelf-cover">
                       <NovelCover
@@ -597,6 +687,29 @@ which === "home" ? (
                   </button>
                 ))}
               </div>
+              {shelfPageCount > 1 && (
+                <nav className="wb-shelf-pager" aria-label={t("书架分页")}>
+                  <button
+                    className="wb-pager-step"
+                    disabled={shelfPage <= 1}
+                    onClick={() => setShelfPage((p) => Math.max(1, p - 1))}
+                    title={t("上一页")}
+                  >
+                    <Icon name="arrow" size={12} />
+                  </button>
+                  <span>{shelfPage} / {shelfPageCount}</span>
+                  <em>{shelfBooks.length} {t("本")}</em>
+                  <button
+                    className="wb-pager-step next"
+                    disabled={shelfPage >= shelfPageCount}
+                    onClick={() => setShelfPage((p) => Math.min(shelfPageCount, p + 1))}
+                    title={t("下一页")}
+                  >
+                    <Icon name="arrow" size={12} />
+                  </button>
+                </nav>
+              )}
+              </>
             )}
           </main>
         ) : which === "stats" ? (
@@ -679,69 +792,183 @@ which === "home" ? (
             <div className="wb-pane-head">
               <div>
                 <h1>{t("灵感便签")}</h1>
-                <p>{t("记一句对白、一个场景或一个念头；只保存在这台电脑上。")}</p>
+                <p>{t("左边找笔记，右边用 Markdown 写；置顶、标签、实时预览，都只在本地。")}</p>
               </div>
-              <span className="wb-notes-count">{notes.length} {t("条")}</span>
+              <span className="wb-notes-count">
+                {notes.length} {t("条")}
+                {noteSavedAt > 0 && ` · ${t("已自动保存")}`}
+              </span>
             </div>
 
-            <section className="wb-note-composer">
-              <textarea
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                placeholder={t("写下一句，留给以后……")}
-                rows={4}
-                onKeyDown={(e) => {
-                  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-                    e.preventDefault();
-                    addNote();
-                  }
-                }}
-              />
-              <div>
-                <span>{t("Ctrl / ⌘ + Enter 保存")}</span>
-                <button className="btn btn-primary btn-sm" onClick={addNote} disabled={!draft.trim()}>
+            <div className="wb-note-workspace">
+              <aside className="wb-note-list">
+                <button className="wb-note-new" onClick={() => addNote()}>
                   <Icon name="plus" size={14} />
-                  {t("收进便签")}
+                  {t("新建笔记")}
+                  <em>⌘N</em>
                 </button>
-              </div>
-            </section>
-
-            {notes.length === 0 ? (
-              <section className="wb-note-starters">
-                <div className="wb-note-starters-head">
-                  <b>{t("从一句开始")}</b>
-                  <span>{t("点一句，放进上面的输入框，再改成你自己的。")}</span>
-                </div>
-                <div className="wb-note-prompt-grid">
-                  {NOTE_PROMPTS.map((prompt) => (
-                    <button
-                      key={prompt}
-                      type="button"
-                      onClick={() =>
-                        setDraft((prev) => (prev.trim() ? `${prev.trim()}\n${prompt}` : prompt))
-                      }
-                    >
-                      <span>“</span>
-                      {t(prompt)}
+                <label className="wb-note-search">
+                  <Icon name="search" size={13} />
+                  <input
+                    value={noteSearch}
+                    onChange={(e) => setNoteSearch(e.target.value)}
+                    placeholder={t("搜索标题或正文")}
+                  />
+                  {noteSearch && (
+                    <button onClick={() => setNoteSearch("")} title={t("清空搜索")}>
+                      <Icon name="close" size={11} />
                     </button>
-                  ))}
-                </div>
-              </section>
-            ) : (
-              <div className="wb-note-grid">
-                {notes.map((note) => (
-                  <article key={note.id} className="wb-note-card">
-                    <p>{note.text}</p>
-                    <footer>
-                      <span>{new Date(note.at).toLocaleDateString(locale, { month: "long", day: "numeric" })} · {new Date(note.at).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })}</span>
-                      <button onClick={() => removeNote(note.id)} title={t("删除这条便签")}>
-                        <Icon name="trash" size={13} />
+                  )}
+                </label>
+                <div className="wb-note-items" role="listbox" aria-label={t("笔记列表")}>
+                  {orderedNotes.map((note) => {
+                    const tags = tagsOf(note.text);
+                    return (
+                      <button
+                        key={note.id}
+                        role="option"
+                        aria-selected={note.id === selectedNote}
+                        className={`wb-note-item${note.id === selectedNote ? " on" : ""}`}
+                        onClick={() => setSelectedNote(note.id)}
+                      >
+                        <div className="wb-note-item-title">
+                          {note.pinned && <Icon name="pin" size={11} />}
+                          <b>{note.title || noteTitle(note.text)}</b>
+                        </div>
+                        <em>
+                          {noteSnippet(note.text) || t("空白笔记")}
+                        </em>
+                        <footer>
+                          <span>{relTime(note.at)}</span>
+                          {tags.slice(0, 2).map((tag) => (
+                            <i key={tag}>#{tag}</i>
+                          ))}
+                        </footer>
                       </button>
-                    </footer>
-                  </article>
-                ))}
-              </div>
-            )}
+                    );
+                  })}
+                  {orderedNotes.length === 0 && notes.length > 0 && (
+                    <p className="wb-note-none">{t("没有匹配的笔记")}</p>
+                  )}
+                </div>
+              </aside>
+
+              <section className="wb-note-desk">
+                {activeNote ? (
+                  <>
+                    <div className="wb-note-desk-head">
+                      <input
+                        className="wb-note-title"
+                        value={activeNote.title}
+                        onChange={(e) => patchNote(activeNote.id, { title: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            noteBodyRef.current?.focus();
+                          }
+                        }}
+                        placeholder={t("笔记标题")}
+                        spellCheck={false}
+                      />
+                      <div className="wb-note-actions">
+                        <button
+                          className={`wb-note-act${activeNote.pinned ? " on" : ""}`}
+                          onClick={() =>
+                            patchNote(activeNote.id, { pinned: !activeNote.pinned })
+                          }
+                          title={activeNote.pinned ? t("取消置顶") : t("置顶")}
+                        >
+                          <Icon name="pin" size={14} />
+                        </button>
+                        <button
+                          className={`wb-note-act${notePreview ? " on" : ""}`}
+                          onClick={() => setNotePreview((v) => !v)}
+                          title={t("切换预览")}
+                        >
+                          <Icon name="file" size={14} />
+                        </button>
+                        <button
+                          className="wb-note-act danger"
+                          onClick={() => removeNote(activeNote.id)}
+                          title={t("删除这条便签")}
+                        >
+                          <Icon name="trash" size={14} />
+                        </button>
+                      </div>
+                    </div>
+                    {(activeTags.length > 0 || activeNote.pinned) && (
+                      <div className="wb-note-tags">
+                        {activeNote.pinned && (
+                          <span className="wb-note-pin-tag">
+                            <Icon name="pin" size={10} />
+                            {t("置顶")}
+                          </span>
+                        )}
+                        {activeTags.map((tag) => (
+                          <button key={tag} onClick={() => setNoteSearch(`#${tag}`)}>
+                            #{tag}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <div className={`wb-note-split${notePreview ? "" : " preview-off"}`}>
+                      <textarea
+                        ref={noteBodyRef}
+                        value={activeNote.text}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          const autoTitle =
+                            !activeNote.title.trim() || activeNote.title === "未命名笔记";
+                          patchNote(activeNote.id, {
+                            text: v,
+                            ...(autoTitle ? { title: noteTitle(v) } : {}),
+                          });
+                        }}
+                        placeholder={t("# 从这里开始\n\n一句对白、一个场景、一个念头。支持 #标签、**粗体**、> 引用、- 列表。")}
+                        spellCheck={false}
+                      />
+                      {notePreview && (
+                        <div className="wb-note-preview">
+                          <div
+                            className="wb-note-preview-body"
+                            dangerouslySetInnerHTML={{ __html: mdToHtml(activeNote.text) }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                    <div className="wb-note-foot">
+                      <span>{activeNote.text.length} {t("字符")}</span>
+                      <span>{activeTags.length} {t("个标签")}</span>
+                      <span className="grow" />
+                      <span>{t("Markdown · 本地自动保存")}</span>
+                    </div>
+                  </>
+                ) : notes.length === 0 ? (
+                  <div className="wb-note-empty">
+                    <span className="wb-note-empty-mark">“</span>
+                    <h2>{t("从一句开始")}</h2>
+                    <p>{t("点一句，直接变成一条 Markdown 笔记，再改成你自己的。")}</p>
+                    <div className="wb-note-prompt-grid">
+                      {NOTE_PROMPTS.map((prompt) => (
+                        <button key={prompt} type="button" onClick={() => addNote(prompt)}>
+                          <span>“</span>
+                          {t(prompt)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="wb-note-empty">
+                    <h2>{t("没有匹配的笔记")}</h2>
+                    <p>{t("换个词搜，或者新建一条。")}</p>
+                    <button className="btn btn-outline btn-sm" onClick={() => addNote()}>
+                      <Icon name="plus" size={13} />
+                      {t("新建笔记")}
+                    </button>
+                  </div>
+                )}
+              </section>
+            </div>
           </main>
         )
   );

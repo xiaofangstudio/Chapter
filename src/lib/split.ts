@@ -196,6 +196,23 @@ function lineEnd(text: string, pos: number): number {
   return nl < 0 ? text.length : nl;
 }
 
+/** 开头常是书名、作者、来源等抬头；这种文字不能自动变成「前言」章节。 */
+function looksLikeDocHeader(text: string): boolean {
+  const lines = text
+    .split("\n")
+    .map((l) => l.replace(/\u3000/g, " ").trim())
+    .filter(Boolean);
+  if (lines.length === 0) return true;
+  if (lines.length > 4) return false;
+  return lines.every(
+    (l) =>
+      /^(书名|作品名|小说名|title|作者|作\s*者|著者|author|by|来源|简介|简介：|字数|标签)\s*[：:]/i.test(l) ||
+      /^#\s+/.test(l) ||
+      /^(.{1,40})\s*(?:著|编著|原著)$/.test(l) ||
+      l.length <= 18,
+  );
+}
+
 export function buildSections(text: string, markers: ImportMarker[]): ImportSection[] {
   const sorted = [...markers]
     .filter((m) => m.pos >= 0 && m.pos <= text.length && m.title.trim())
@@ -205,14 +222,21 @@ export function buildSections(text: string, markers: ImportMarker[]): ImportSect
   let chapterNo = 0;
 
   const push = (title: string, body: string, vol: string) => {
-    sections.push({ title: title.trim() || `第${chapterNo + 1}章`, body: body.trim(), volumeTitle: vol });
+    const clean = body.trim();
+    // 只有标题、没有正文的扫描结果不再变成空章节。
+    if (!clean) return;
+    sections.push({
+      title: title.trim() || `第${chapterNo + 1}章`,
+      body: clean,
+      volumeTitle: vol,
+    });
     chapterNo += 1;
   };
 
-  // 第一个标题之前的文字：够长就收成「前言」，避免丢稿。
+  // 第一个标题之前的文字：像书名的抬头直接丢弃，确有正文才收成「前言」。
   if (sorted.length > 0) {
     const preface = text.slice(0, sorted[0].pos).trim();
-    if (preface.length > 40) push("前言", preface, volume);
+    if (preface.length > 40 && !looksLikeDocHeader(preface)) push("前言", preface, volume);
   }
 
   for (let i = 0; i < sorted.length; i += 1) {
@@ -223,7 +247,8 @@ export function buildSections(text: string, markers: ImportMarker[]): ImportSect
     }
     const start = lineEnd(text, m.pos);
     const end = i + 1 < sorted.length ? sorted[i + 1].pos : text.length;
-    push(m.title, text.slice(Math.min(start + 1, text.length), end), volume);
+    const body = text.slice(Math.min(start + 1, text.length), end);
+    push(m.title, body, volume);
   }
 
   if (sections.length === 0) push("全文", text, volume);

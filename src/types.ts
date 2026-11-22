@@ -14,6 +14,10 @@ export interface BookMeta {
   description?: string;
   /** 整书大纲：受限 Markdown，单独于章节大纲保存。 */
   bookOutline?: string;
+  /** 前言 / 序言等前置副文本，Markdown 原文。 */
+  frontMatter?: string;
+  /** 后记 / 附录 / 番外说明等后置副文本，Markdown 原文。 */
+  backMatter?: string;
   /** 自定义封面没有画面书脊，用这个颜色画书脊。 */
   spineColor?: string;
   /** custom = 用上传的封面；default = 用内置默认封面库。 */
@@ -61,10 +65,39 @@ export interface LoreEntry {
   name: string;
   fields: LoreField[];
   note: string;
+  /** 关系图谱里的坐标（0–1 相对画布），拖拽后保存。 */
+  gx?: number;
+  gy?: number;
+  /** 节点标记色。 */
+  color?: string;
+  /** 角色立绘，存为压缩后的 data URL；不设则只显示名字。 */
+  portrait?: string;
+  /** 主角皇冠。 */
+  crown?: boolean;
+}
+
+export interface LoreRelation {
+  id: string;
+  from: string;
+  to: string;
+  label: string;
+}
+
+export interface WorldPin {
+  id: string;
+  entryId: string;
+  x: number;
+  y: number;
+  label: string;
 }
 
 export interface Lore {
   entries: LoreEntry[];
+  relations?: LoreRelation[];
+  worldMap?: {
+    image?: string;
+    pins?: WorldPin[];
+  };
 }
 
 export interface BookSummary {

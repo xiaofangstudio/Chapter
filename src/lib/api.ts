@@ -37,6 +37,8 @@ export const api = {
     invoke<RawProject>("restore_snapshot", { path, name }),
   exportBook: (path: string, format: string, dest: string) =>
     invoke<string>("export_book", { path, format, dest }),
+  printExport: (doc: unknown, dest: string, format: "pdf" | "word") =>
+    invoke<string>("print_export", { doc, dest, format }),
   countText: (text: string) => invoke<number>("count_text", { text }),
   readImportFile: (path: string) => invoke<ImportDoc>("read_import_file", { path }),
   imageData: (path: string) => invoke<string>("image_data", { path }),

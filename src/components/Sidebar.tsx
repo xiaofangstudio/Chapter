@@ -207,7 +207,7 @@ export function Sidebar(props: Props) {
                       <span className="ch-words">{ch.words > 0 ? fmtNumber(ch.words) : ""}</span>
                       <button
                         className="row-add"
-                        title="本章更多"
+                        title={t("本章更多")}
                         onClick={(e) => {
                           e.stopPropagation();
                           const r = (e.currentTarget as HTMLElement).getBoundingClientRect();

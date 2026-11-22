@@ -182,7 +182,7 @@ export function InfoPanel({
           style={{ marginTop: 6, height: 26, fontSize: 11, padding: "0 4px", color: "var(--accent)" }}
           onClick={onOpenSnapshots}
         >
-          查看全部版本
+          {t("查看全部版本")}
           <Icon name="arrow" size={12} />
         </button>
       </div>

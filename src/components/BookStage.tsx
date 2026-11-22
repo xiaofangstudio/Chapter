@@ -190,7 +190,7 @@ export function BookStage({ books, covers, initialPath, originRect, onClose, onE
       const rot = clamp(-off * 46, -68, 68);
       const scale = 1 / (1 + abs * 0.16);
       slot.style.transform = `translate(-50%, -50%) translate3d(${x.toFixed(2)}px, ${y.toFixed(2)}px, ${z.toFixed(2)}px) rotateY(${rot.toFixed(2)}deg) scale(${scale.toFixed(3)})`;
-      slot.style.zIndex = String(70 - Math.round(abs * 8));
+      slot.style.zIndex = String(i === focusNow ? 74 : 70 - Math.round(abs * 8));
       slot.style.pointerEvents = revealedRef.current && abs < 2.6 ? "auto" : "none";
 
       let opacity = 1 - Math.min(0.58, abs * 0.11);

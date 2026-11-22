@@ -76,6 +76,8 @@ export function useProximityGlow() {
       const dx = x - window.innerWidth / 2;
       const dy = y - window.innerHeight / 2;
       spot.style.transform = `translate3d(${dx.toFixed(1)}px, ${dy.toFixed(1)}px, 0)`;
+      root.style.setProperty("--light-x", `${x.toFixed(0)}px`);
+      root.style.setProperty("--light-y", `${y.toFixed(0)}px`);
     };
     setSpot(cx, cy);
 
@@ -186,6 +188,8 @@ export function useProximityGlow() {
       tx = -1000;
       ty = -1000;
       if (spot) spot.style.transform = "translate3d(-120vw, -120vh, 0)";
+      root.style.setProperty("--light-x", "-100vw");
+      root.style.setProperty("--light-y", "-100vh");
       schedulePaint();
     };
     const onEnter = () => {
