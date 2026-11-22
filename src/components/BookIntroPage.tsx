@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import type { BookMeta, Outline } from "../types";
-import { bookInitial, coverTone, fmtWords, relTime } from "../lib/text";
+import { fmtWords, relTime } from "../lib/text";
 import { t } from "../lib/i18n";
 import { Icon } from "./Icon";
 import { Logo } from "./Logo";
+import { NovelCover } from "./NovelCover";
 
 interface Props {
   meta: BookMeta;
@@ -39,7 +40,6 @@ export function BookIntroPage(props: Props) {
     }
   }, [openVolume, outline.volumes]);
 
-  const tone = coverTone(meta.title || "书");
   const resumeId =
     (activeId && flat.some((c) => c.id === activeId) ? activeId : null) ??
     (meta.lastChapterId && flat.some((c) => c.id === meta.lastChapterId) ? meta.lastChapterId : null) ??
@@ -75,11 +75,19 @@ export function BookIntroPage(props: Props) {
         <section className="intro-hero">
           <button
             className="intro-cover"
-            style={{ background: `linear-gradient(150deg, ${tone.from}, ${tone.to})` }}
             title={t("更换封面")}
             onClick={props.onPickCover}
           >
-            {coverUrl ? <img src={coverUrl} alt="" /> : <b>{bookInitial(meta.title)}</b>}
+            <NovelCover
+              title={meta.title}
+              author={meta.author}
+              coverUrl={coverUrl}
+              template={meta.coverStyle}
+              loading="eager"
+            />
+            <span className="intro-cover-kind">
+              {coverUrl ? t("自定义封面") : t("默认封面")}
+            </span>
             <span className="intro-cover-shade">
               <Icon name="image" size={14} />
               {t("更换封面")}

@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import type { BookSummary, UiLanguage } from "../types";
-import { coverTone, fmtWords, relTime } from "../lib/text";
+import { fmtWords, relTime } from "../lib/text";
 import { t } from "../lib/i18n";
 import { pickWelcome, greetingLine } from "../lib/welcome";
 import { Icon } from "./Icon";
 import { Logo } from "./Logo";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
+import { NovelCover } from "./NovelCover";
 
 interface Props {
   books: BookSummary[];
@@ -153,7 +154,6 @@ export function Welcome({
             ) : (
               <div className="shelf-grid stagger">
                 {books.map((b, i) => {
-                  const tone = coverTone(b.title);
                   const cover = covers[b.path];
                   const pct = b.targetWords > 0 ? Math.min(100, (b.words / b.targetWords) * 100) : 0;
                   return (
@@ -167,19 +167,14 @@ export function Welcome({
                         setMenu({ x: e.clientX, y: e.clientY, book: b });
                       }}
                     >
-                      <div
-                        className="book-thumb"
-                        style={{ background: `linear-gradient(150deg, ${tone.from}, ${tone.to})` }}
-                      >
-                        {cover ? (
-                          <img src={cover} alt="" loading="lazy" decoding="async" />
-                        ) : (
-                          <span className="mini-cover">
-                            <span className="mini-cover-title">{b.title || t("未命名")}</span>
-                            <span className="mini-cover-author">{b.author || t("佚名")}</span>
-                            <span className="mini-cover-imprint">CHAPTER</span>
-                          </span>
-                        )}
+                      <div className="book-thumb">
+                        <NovelCover
+                          title={b.title}
+                          author={b.author}
+                          coverUrl={b.coverMode === "default" ? undefined : cover}
+                          template={b.coverStyle}
+                          loading="lazy"
+                        />
                       </div>
                       <div className="book-info">
                         <div className="book-title">{b.title || t("未命名")}</div>

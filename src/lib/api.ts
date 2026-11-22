@@ -26,6 +26,8 @@ export const api = {
   deleteBook: (path: string) => invoke<void>("delete_book", { path }),
   setCover: (path: string, source: string) =>
     invoke<string>("set_cover", { path, source }),
+  setCoverImage: (path: string, dataUrl: string) =>
+    invoke<string>("set_cover_image", { path, dataUrl }),
   coverData: (path: string, rel: string) =>
     invoke<string | null>("cover_data", { path, rel }),
   createSnapshot: (path: string, label: string) =>

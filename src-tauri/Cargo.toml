@@ -1,6 +1,6 @@
 [package]
 name = "chapter"
-version = "1.3.1"
+version = "1.3.3"
 description = "Chapter · 小方工作室出品 · 全中文、永久免费开源（MIT）的长篇小说写作工作台"
 authors = ["小方工作室"]
 license = "MIT"

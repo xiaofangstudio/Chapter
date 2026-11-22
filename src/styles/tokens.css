@@ -10,12 +10,14 @@
   --font-serif: "Source Han Serif SC", "Noto Serif SC", "Songti SC", "SimSun", serif;
   --font-num: "Segoe UI", "Microsoft YaHei UI", var(--font-ui);
 
-  /* 圆角：小控件 6，按钮 8，面板 12，大容器 16，胶囊 999 */
+  /* 圆角：小控件 6，按钮/输入 8，面板 12，大卡片 16，大浮层 22/24，封面 8 */
   --r-xs: 6px;
   --r-sm: 8px;
   --r-md: 12px;
   --r-lg: 16px;
   --r-xl: 22px;
+  --r-2xl: 24px;
+  --r-cover: 8px;
   --r-full: 999px;
 
   /* 间距一律 4 的倍数 */

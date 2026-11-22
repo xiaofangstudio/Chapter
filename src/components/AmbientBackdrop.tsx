@@ -16,6 +16,7 @@ export function AmbientBackdrop({ scene }: Props) {
       <span className="ambient-glow glow-a" />
       <span className="ambient-glow glow-b" />
       <span className="ambient-flow" />
+      <span className="spot-glow" />
 
       <svg
         className="ambient-silk"

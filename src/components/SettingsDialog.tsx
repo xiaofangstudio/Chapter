@@ -18,6 +18,7 @@ import { t } from "../lib/i18n";
 import { api, errText } from "../lib/api";
 import { readScanRules, writeScanRules } from "../lib/split";
 import { Icon } from "./Icon";
+import { LanguagePicker } from "./LanguagePicker";
 import { Logo } from "./Logo";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -589,7 +590,7 @@ function GitPanel({ projectPath, onReloadProject, onSaveCurrent }: {
 }
 
 function AboutPanel() {
-  const [version, setVersion] = useState("1.3.1");
+  const [version, setVersion] = useState("1.3.3");
   const [copied, setCopied] = useState(false);
   useEffect(() => {
     getVersion().then(setVersion).catch(() => {});
@@ -633,7 +634,7 @@ function AboutPanel() {
 
 export function SettingsDialog(props: SettingsDialogProps) {
   const [section, setSection] = useState<Section>(props.initialSection ?? "appearance");
-  const [version, setVersion] = useState("1.3.1");
+  const [version, setVersion] = useState("1.3.3");
   useEffect(() => {
     getVersion().then(setVersion).catch(() => {});
   }, []);
@@ -751,12 +752,8 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   <Row label="动效" note="关掉后最省电、最跟手">
                     <Seg value={props.motion} options={[{ key: "full", label: "完整" }, { key: "reduced", label: "精简" }, { key: "off", label: "关" }]} onChange={props.onMotion} />
                   </Row>
-                  <Row label="语言" note="只在这里切换一次，不再有第二处">
-                    <select className="input settings-select" value={props.language} onChange={(e) => props.onLanguage(e.target.value as UiLanguage)}>
-                      {LANGUAGES.map((l) => (
-                        <option key={l.key} value={l.key}>{l.label}</option>
-                      ))}
-                    </select>
+                  <Row label="语言" note="国家名、英文名、简写都能搜">
+                    <LanguagePicker value={props.language} language={props.language} onChange={props.onLanguage} />
                   </Row>
                 </div>
               </div>

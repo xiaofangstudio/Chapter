@@ -1,5 +1,10 @@
 import type { UiLanguage } from "../types";
 import { MANUAL_PACKS } from "./i18n-manual";
+import { MORE_COMMON } from "./i18n-common";
+import { NOTES_PACKS } from "./i18n-notes";
+import { STATS_PACKS } from "./i18n-stats";
+import { MORE_PACKS } from "./i18n-more";
+import { WORLD_PACKS } from "./i18n-world";
 
 type Pack = Record<string, string>;
 
@@ -1001,13 +1006,24 @@ const ar: Pack = {
 };
 
 const BASE_PACKS = { en, ja, ko, fr, de, es, pt, ru, ar } as const;
+const ALL_BASE: Record<string, Pack> = { ...BASE_PACKS, ...MORE_PACKS, ...WORLD_PACKS };
 
 /** 初始只带人工校对与内置词典；自动翻译包在真正使用非中文时再加载。 */
 const packs = {} as Record<Exclude<UiLanguage, "zh">, Pack>;
 
 function rebuildPacks(auto: Record<string, Pack> = {}, extra: Record<string, Pack> = {}) {
-  (Object.keys(BASE_PACKS) as Exclude<UiLanguage, "zh">[]).forEach((lang) => {
-    packs[lang] = { ...(auto[lang] ?? {}), ...(extra[lang] ?? {}), ...(MANUAL_PACKS[lang] ?? {}), ...BASE_PACKS[lang] };
+  (Object.keys(ALL_BASE) as Exclude<UiLanguage, "zh">[]).forEach((lang) => {
+    packs[lang] = {
+      ...(auto[lang] ?? {}),
+      ...(extra[lang] ?? {}),
+      ...(MANUAL_PACKS[lang] ?? {}),
+      ...(MORE_COMMON[lang] ?? {}),
+      ...(NOTES_PACKS[lang] ?? {}),
+      ...(STATS_PACKS[lang] ?? {}),
+      ...(MORE_PACKS[lang] ?? {}),
+      ...(WORLD_PACKS[lang] ?? {}),
+      ...(BASE_PACKS[lang as keyof typeof BASE_PACKS] ?? {}),
+    };
   });
 }
 rebuildPacks();

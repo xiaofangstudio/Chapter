@@ -56,6 +56,8 @@ export function useProximityGlow() {
     let raf = 0;
     let paintTimer = 0;
     let scanTimer = 0;
+    let scrollTimer = 0;
+    let scrolling = false;
     let lastPaint = -1000;
     let tx = window.innerWidth / 2;
     let ty = window.innerHeight / 2;
@@ -68,13 +70,14 @@ export function useProximityGlow() {
     aura.setAttribute("aria-hidden", "true");
     document.body.appendChild(aura);
 
-    const ambient = document.querySelector<HTMLElement>(".ambient");
-    const setSilk = (x: number, y: number) => {
-      if (!ambient || root.dataset.lightEffect !== "spot") return;
-      ambient.style.setProperty("--silk-x", `${x.toFixed(1)}px`);
-      ambient.style.setProperty("--silk-y", `${y.toFixed(1)}px`);
+    const spot = document.querySelector<HTMLElement>(".spot-glow");
+    const setSpot = (x: number, y: number) => {
+      if (!spot || root.dataset.lightEffect !== "spot") return;
+      const dx = x - window.innerWidth / 2;
+      const dy = y - window.innerHeight / 2;
+      spot.style.transform = `translate3d(${dx.toFixed(1)}px, ${dy.toFixed(1)}px, 0)`;
     };
-    setSilk(cx, cy);
+    setSpot(cx, cy);
 
     const motionAllows = () => root.dataset.motion !== "off";
 
@@ -100,7 +103,7 @@ export function useProximityGlow() {
 
     const paint = (time: number) => {
       paintTimer = 0;
-      if (stopped || time - lastPaint < 90 || !motionAllows()) return;
+      if (stopped || scrolling || time - lastPaint < 90 || !motionAllows()) return;
       lastPaint = time;
       for (const item of items) {
         const { el, rect } = item;
@@ -152,7 +155,7 @@ export function useProximityGlow() {
       cx += (tx - cx) * ease;
       cy += (ty - cy) * ease;
       aura.style.transform = `translate3d(${(cx - 260).toFixed(1)}px, ${(cy - 260).toFixed(1)}px, 0)`;
-      setSilk(cx, cy);
+      setSpot(cx, cy);
       if (Math.abs(tx - cx) > 0.4 || Math.abs(ty - cy) > 0.4) raf = requestAnimationFrame(loop);
     };
 
@@ -164,20 +167,25 @@ export function useProximityGlow() {
         cx = tx;
         cy = ty;
         aura.style.transform = `translate3d(${(cx - 260).toFixed(1)}px, ${(cy - 260).toFixed(1)}px, 0)`;
-        setSilk(cx, cy);
+        setSpot(cx, cy);
       }
       schedulePaint();
     };
     const onScroll = () => {
-      schedulePaint();
-      scheduleScan();
+      // 滚动期间不做矩形扫描和卡片重绘；长文滚动最怕每一帧被强制布局打断。
+      scrolling = true;
+      window.clearTimeout(scrollTimer);
+      scrollTimer = window.setTimeout(() => {
+        scrolling = false;
+        scheduleScan();
+        schedulePaint();
+      }, 240);
     };
     const onLeave = () => {
       aura.style.opacity = "0";
       tx = -1000;
       ty = -1000;
-      ambient?.style.setProperty("--silk-x", "-900px");
-      ambient?.style.setProperty("--silk-y", "-900px");
+      if (spot) spot.style.transform = "translate3d(-120vw, -120vh, 0)";
       schedulePaint();
     };
     const onEnter = () => {
@@ -190,6 +198,7 @@ export function useProximityGlow() {
       }
       scheduleScan();
       schedulePaint();
+      setSpot(cx, cy);
     };
     const onVisibility = () => {
       if (document.hidden && raf) {
@@ -221,6 +230,7 @@ export function useProximityGlow() {
       stopped = true;
       window.clearTimeout(paintTimer);
       window.clearTimeout(scanTimer);
+      window.clearTimeout(scrollTimer);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onResize);

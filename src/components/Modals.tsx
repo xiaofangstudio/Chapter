@@ -20,6 +20,7 @@ export function Modal({
   children,
   actions,
   wide,
+  wider,
   onClose,
 }: {
   title: string;
@@ -27,6 +28,7 @@ export function Modal({
   children: ReactNode;
   actions?: ReactNode;
   wide?: boolean;
+  wider?: boolean;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -44,7 +46,7 @@ export function Modal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className={`modal glass${wide ? " wide" : ""}`} role="dialog" aria-modal="true">
+      <div className={`modal glass${wide ? " wide" : ""}${wider ? " wider" : ""}`} role="dialog" aria-modal="true">
         <div className="modal-head">
           <div>
             <h3>{title}</h3>
@@ -541,36 +543,30 @@ export function BookMetaDialog({ meta, onClose, onSave }: BookMetaDialogProps) {
           />
         </label>
         <div className="settings-note">{t("简介只用于介绍页，不会进入正文。")}</div>
-        {meta.cover ? (
-          <div className="field" style={{ marginTop: 12 }}>
-            <span>{t("书脊颜色")}</span>
-            <div className="spine-swatches">
-              {SPINE_SWATCHES.map((c) => (
-                <button
-                  key={c}
-                  className={`spine-swatch${spineColor === c ? " on" : ""}`}
-                  style={{ background: c }}
-                  title={c}
-                  onClick={() => setSpineColor(c)}
-                />
-              ))}
-              <label className="spine-swatch custom" title={t("自定义颜色")}>
-                <input
-                  type="color"
-                  value={spineColor}
-                  onChange={(e) => setSpineColor(e.target.value)}
-                />
-              </label>
-            </div>
-            <div className="settings-note">
-              {t("自定义封面不画书脊，只用这个颜色做侧面。")}
-            </div>
+        <div className="field" style={{ marginTop: 12 }}>
+          <span>{t("书脊颜色")}</span>
+          <div className="spine-swatches">
+            {SPINE_SWATCHES.map((c) => (
+              <button
+                key={c}
+                className={`spine-swatch${spineColor === c ? " on" : ""}`}
+                style={{ background: c }}
+                title={c}
+                onClick={() => setSpineColor(c)}
+              />
+            ))}
+            <label className="spine-swatch custom" title={t("自定义颜色")}>
+              <input
+                type="color"
+                value={spineColor}
+                onChange={(e) => setSpineColor(e.target.value)}
+              />
+            </label>
           </div>
-        ) : (
-          <div className="settings-note" style={{ marginTop: 10 }}>
-            {t("默认封面自带书脊；换成自定义封面后，可以单独选书脊颜色。")}
+          <div className="settings-note">
+            {t("默认封面和自定义封面都可以单独改书脊颜色；切书页会立刻使用这个颜色。")}
           </div>
-        )}
+        </div>
       </div>
     </Modal>
   );

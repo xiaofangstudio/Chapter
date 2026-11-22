@@ -1,9 +1,9 @@
 import { useState } from "react";
 import type { BookMeta, SaveState, ViewKind } from "../types";
-import { coverTone } from "../lib/text";
 import { t } from "../lib/i18n";
 import { Icon } from "./Icon";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
+import { NovelCover } from "./NovelCover";
 
 interface Props {
   meta: BookMeta;
@@ -50,7 +50,6 @@ export function TopBar(props: Props) {
 
   const [more, setMore] = useState<{ x: number; y: number } | null>(null);
   const [outlineMenu, setOutlineMenu] = useState<{ x: number; y: number } | null>(null);
-  const tone = coverTone(meta.title || "书");
 
   const items: MenuItem[] = [
     { label: t("设置封面…"), icon: "image", onClick: onPickCover },
@@ -68,18 +67,15 @@ export function TopBar(props: Props) {
         <button className="icon-btn" title={t("回到书架")} onClick={onBack}>
           <Icon name="book" size={17} />
         </button>
-        <div
-          className="book-chip"
-          style={{ background: `linear-gradient(150deg, ${tone.from}, ${tone.to})` }}
-        >
-          {coverUrl ? (
-            <img src={coverUrl} alt="" />
-          ) : (
-            <span className="book-chip-cover" aria-hidden="true">
-              <em>{Array.from(meta.title || t("未命名")).slice(0, 6).join("")}</em>
-              <small>CH</small>
-            </span>
-          )}
+        <div className="book-chip">
+          <NovelCover
+            title={meta.title}
+            author={meta.author}
+            coverUrl={coverUrl}
+            template={meta.coverStyle}
+            compact
+            loading="eager"
+          />
         </div>
         <span className="topbar-title">{meta.title || "未命名"}</span>
         <span className={`save-dot ${saveState}`}>

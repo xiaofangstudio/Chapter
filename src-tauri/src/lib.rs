@@ -349,6 +349,8 @@ struct BookSummary {
     id: String,
     chapter_count: usize,
     spine_color: Option<String>,
+    cover_style: Option<String>,
+    cover_mode: Option<String>,
 }
 
 fn summarize_book(dir: &Path) -> Option<BookSummary> {
@@ -370,6 +372,14 @@ fn summarize_book(dir: &Path) -> Option<BookSummary> {
     let id = book.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let spine_color = book
         .get("spineColor")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let cover_style = book
+        .get("coverStyle")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let cover_mode = book
+        .get("coverMode")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
     let cover = book.get("cover").and_then(|v| v.as_str()).map(|rel| {
@@ -401,6 +411,8 @@ fn summarize_book(dir: &Path) -> Option<BookSummary> {
         id,
         chapter_count,
         spine_color,
+        cover_style,
+        cover_mode,
     })
 }
 
@@ -572,6 +584,31 @@ fn delete_book(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 封面统一写入点：复制到书籍目录、清掉旧副本、更新 book.json。
+/// GUI 的裁切结果和 MCP 传入的图片文件都走这里，避免两套落盘行为。
+fn install_cover(dir: &Path, bytes: &[u8], ext: &str) -> Result<String, String> {
+    let assets = dir.join("assets");
+    ensure_dir(&assets)?;
+    if let Ok(entries) = fs::read_dir(&assets) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with("cover.") {
+                let _ = fs::remove_file(e.path());
+            }
+        }
+    }
+    let rel = format!("assets/cover.{ext}");
+    fs::write(dir.join(&rel), bytes).map_err(|e| format!("复制封面失败：{e}"))?;
+    let mut book = read_json_value(&dir.join(BOOK_FILE));
+    if book.is_null() {
+        book = json!({});
+    }
+    book["cover"] = json!(rel);
+    book["updatedAt"] = json!(now_ms());
+    write_json(&dir.join(BOOK_FILE), &serde_json::to_string(&book).unwrap())?;
+    Ok(rel)
+}
+
 #[tauri::command]
 fn set_cover(path: String, source: String) -> Result<String, String> {
     let dir = PathBuf::from(&path);
@@ -587,27 +624,30 @@ fn set_cover(path: String, source: String) -> Result<String, String> {
         "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" => ext,
         _ => return Err("封面支持 PNG / JPG / WEBP / GIF / BMP".into()),
     };
-    let assets = dir.join("assets");
-    ensure_dir(&assets)?;
-    // 清掉旧封面，避免多张并存
-    if let Ok(entries) = fs::read_dir(&assets) {
-        for e in entries.flatten() {
-            let name = e.file_name().to_string_lossy().to_string();
-            if name.starts_with("cover.") {
-                let _ = fs::remove_file(e.path());
-            }
-        }
+    let bytes = fs::read(&src).map_err(|e| format!("读取封面失败：{e}"))?;
+    install_cover(&dir, &bytes, &ext)
+}
+
+#[tauri::command]
+fn set_cover_image(path: String, data_url: String) -> Result<String, String> {
+    let dir = PathBuf::from(&path);
+    let (meta, data) = data_url
+        .split_once(',')
+        .ok_or_else(|| "封面数据格式不正确".to_string())?;
+    if !meta.contains(";base64") {
+        return Err("封面数据格式不正确".into());
     }
-    let rel = format!("assets/cover.{ext}");
-    fs::copy(&src, dir.join(&rel)).map_err(|e| format!("复制封面失败：{e}"))?;
-    let mut book = read_json_value(&dir.join(BOOK_FILE));
-    if book.is_null() {
-        book = json!({});
-    }
-    book["cover"] = json!(rel);
-    book["updatedAt"] = json!(now_ms());
-    write_json(&dir.join(BOOK_FILE), &serde_json::to_string(&book).unwrap())?;
-    Ok(rel)
+    let ext = if meta.contains("image/jpeg") || meta.contains("image/jpg") {
+        "jpg"
+    } else if meta.contains("image/webp") {
+        "webp"
+    } else {
+        "png"
+    };
+    let bytes = B64
+        .decode(data)
+        .map_err(|e| format!("封面数据解码失败：{e}"))?;
+    install_cover(&dir, &bytes, ext)
 }
 
 #[tauri::command]
@@ -2842,6 +2882,7 @@ pub fn run() {
             delete_chapter,
             delete_book,
             set_cover,
+            set_cover_image,
             cover_data,
             create_snapshot,
             list_snapshots,

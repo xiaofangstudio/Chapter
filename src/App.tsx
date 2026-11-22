@@ -50,6 +50,8 @@ import {
   SnapshotDialog,
   SceneEditorDialog,
 } from "./components/Modals";
+import { CoverCropDialog } from "./components/CoverCropDialog";
+import { CoverPickerDialog } from "./components/CoverPickerDialog";
 
 // 首屏只加载书架/工作台；写作视图、介绍页、大纲、设置、导入在真正打开时才取。
 const BookIntroPage = lazy(() =>
@@ -295,6 +297,12 @@ export default function App() {
   const [sceneEdit, setSceneEdit] = useState<{ chapterId: string; sceneId: string | null } | null>(
     null,
   );
+  const [coverDraft, setCoverDraft] = useState<{
+    path: string;
+    src: string;
+    name: string;
+  } | null>(null);
+  const [coverPickerOpen, setCoverPickerOpen] = useState(false);
 
   const [toasts, setToasts] = useState<
     { id: number; text: string; warn?: boolean; action?: { label: string; run: () => void } }[]
@@ -557,7 +565,11 @@ export default function App() {
       const flushed = editorRef.current?.flush();
       const body = flushed !== undefined ? flushed : p.bodies[cid] ?? "";
       const newWords = countWords(body);
-      const total = totalWords(p.outline, p.bodies, cid, body);
+      // 只按大纲里已有的章字数替换当前章，不再每次保存都重扫整本书 50 万字。
+      const total = allChapters(p.outline).reduce(
+        (n, c) => n + (c.id === cid ? newWords : c.words ?? 0),
+        0,
+      );
       const today = dateKey();
       const delta = newWords - chapter.words;
       let daily = p.meta.daily;
@@ -766,9 +778,9 @@ export default function App() {
     const p = projectRef.current;
     const id = activeRef.current;
     if (!p || !id) return;
-    editorRef.current?.flush();
+    const flushed = editorRef.current?.flush();
     const chapter = findChapter(p.outline, id);
-    const body = p.bodies[id];
+    const body = typeof flushed === "string" ? flushed : p.bodies[id];
     if (typeof body !== "string") return;
     await api.saveChapter(p.path, id, chapter?.title ?? "", body);
     lastSaved.current = { ...lastSaved.current, [id]: body };
@@ -1319,11 +1331,16 @@ export default function App() {
     [commit, persistJson, refreshBooks, toast],
   );
 
-  const pickCover = useCallback(async () => {
+  const openCoverPicker = useCallback(() => {
+    if (!projectRef.current) return;
+    setCoverPickerOpen(true);
+  }, []);
+
+  const pickCoverFile = useCallback(async () => {
     const p = projectRef.current;
     if (!p) return;
     try {
-      await saveAll(true);
+      await saveAll(false);
       const picked = await openDialog({
         multiple: false,
         title: t("选一张封面"),
@@ -1332,18 +1349,79 @@ export default function App() {
         ],
       });
       if (typeof picked !== "string") return;
-      const rel = await api.setCover(p.path, picked);
-      const raw = await api.openBook(p.path);
-      const fresh = parseProject(raw);
-      commit(fresh);
-      const data = await api.coverData(p.path, rel);
-      if (data) setCovers((c) => ({ ...c, [p.path]: data }));
-      toast("封面已更新");
-      refreshBooks();
+      const src = await api.imageData(picked);
+      if (!src) throw new Error("无法读取这张图片");
+      setCoverDraft({
+        path: p.path,
+        src,
+        name: picked.split(/[\\/]/).pop() ?? picked,
+      });
     } catch (e) {
-      toast(`设置封面失败：${errText(e)}`, { warn: true });
+      toast(`读取封面失败：${errText(e)}`, { warn: true });
     }
-  }, [commit, refreshBooks, saveAll, toast]);
+  }, [saveAll, toast]);
+
+  const chooseCoverFile = useCallback(() => {
+    setCoverPickerOpen(false);
+    void pickCoverFile();
+  }, [pickCoverFile]);
+
+  const applyCover = useCallback(
+    async (dataUrl: string) => {
+      const draft = coverDraft;
+      if (!draft) return;
+      try {
+        const rel = await api.setCoverImage(draft.path, dataUrl);
+        const data = await api.coverData(draft.path, rel);
+        if (data) setCovers((c) => ({ ...c, [draft.path]: data }));
+        // set_cover_image 只写 cover 字段；把模式明确为自定义，旧的自定义图也保留。
+        const raw = await api.openBook(draft.path);
+        const fresh = parseProject(raw);
+        const meta = {
+          ...fresh.meta,
+          cover: fresh.meta.cover ?? rel,
+          coverMode: "custom" as const,
+          updatedAt: Date.now(),
+        };
+        await api.saveJson(draft.path, "book.json", JSON.stringify(meta));
+        const p = projectRef.current;
+        if (p && p.path === draft.path) {
+          commit({ ...fresh, meta });
+        }
+        await refreshBooks();
+        setCoverDraft(null);
+        toast("封面已复制到小说目录");
+      } catch (e) {
+        // 保留裁切框，用户可以直接重试，不用再选一次原图。
+        toast(`设置封面失败：${errText(e)}`, { warn: true });
+      }
+    },
+    [commit, coverDraft, refreshBooks, toast],
+  );
+
+  const applyCoverOptions = useCallback(
+    async (value: { mode: "custom" | "default"; style: string; spineColor: string }) => {
+      const p = projectRef.current;
+      if (!p) return;
+      if (value.mode === "custom" && !p.meta.cover) {
+        toast("先选择一张自定义封面图片", { warn: true });
+        return;
+      }
+      const meta = {
+        ...p.meta,
+        coverMode: value.mode,
+        coverStyle: value.style,
+        spineColor: value.spineColor,
+        updatedAt: Date.now(),
+      };
+      commit({ ...p, meta });
+      await api.saveJson(p.path, "book.json", JSON.stringify(meta));
+      setCoverPickerOpen(false);
+      await refreshBooks();
+      toast(value.mode === "default" ? "已使用默认封面" : "已使用自定义封面");
+    },
+    [commit, refreshBooks, toast],
+  );
 
   const deleteBook = useCallback(() => {
     const p = projectRef.current;
@@ -1757,8 +1835,8 @@ export default function App() {
   const chapterIndex = activeChapter ? flat.findIndex((c) => c.id === activeChapter.id) : -1;
 
   const bookWords = useMemo(
-    () => (project ? totalWords(project.outline, project.bodies) : 0),
-    [project],
+    () => flat.reduce((n, c) => n + (c.words ?? 0), 0),
+    [flat],
   );
 
   const todayAdded = useMemo(() => {
@@ -1782,7 +1860,8 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.path]);
 
-  const coverUrl = project ? covers[project.path] : undefined;
+  const rawCoverUrl = project ? covers[project.path] : undefined;
+  const coverUrl = project && project.meta.coverMode !== "default" ? rawCoverUrl : undefined;
 
   /* ───────── 渲染 ───────── */
 
@@ -1815,7 +1894,7 @@ export default function App() {
             onBack={backToShelf}
             onSelectChapter={(id) => void enterChapter(id)}
             onBookSettings={() => setMetaDialog(true)}
-            onPickCover={pickCover}
+            onPickCover={openCoverPicker}
             onToggleTheme={() => setThemeMode(theme === "light" ? "dark" : "light")}
             onSettings={() => openSettings()}
             onAddVolume={addVolume}
@@ -1846,7 +1925,7 @@ export default function App() {
             onVersions={() => openSettings("git")}
             onBack={backToShelf}
             onBookSettings={() => setMetaDialog(true)}
-            onPickCover={pickCover}
+            onPickCover={openCoverPicker}
             onDeleteBook={deleteBook}
           />
 
@@ -1884,11 +1963,10 @@ export default function App() {
                     todayAdded={todayAdded}
                     focusMode={focus}
                     apiRef={editorRef}
-                    onBody={(md) => {
-                      const p = projectRef.current;
-                      if (!p || !activeId) return;
+                    onBody={() => {
+                      // 正文先留在编辑器里，等 1.4 秒自动保存时再整章落盘。
+                      // 每次按键都 setProject 会触发整棵工作台重渲染和大纲重算，长文明显卡顿。
                       setSaveState("dirty");
-                      commit({ ...p, bodies: { ...p.bodies, [activeId]: md } });
                     }}
                     onTitle={(title) => activeId && updateTitle(activeId, title)}
                     onSave={() => saveAll(true)}
@@ -2092,6 +2170,29 @@ export default function App() {
           </div>
         ))}
       </div>
+
+      {coverPickerOpen && project && (
+        <CoverPickerDialog
+          title={project.meta.title}
+          author={project.meta.author}
+          coverMode={project.meta.coverMode}
+          coverStyle={project.meta.coverStyle}
+          spineColor={project.meta.spineColor}
+          customCoverUrl={rawCoverUrl}
+          onClose={() => setCoverPickerOpen(false)}
+          onApply={applyCoverOptions}
+          onPickFile={chooseCoverFile}
+        />
+      )}
+
+      {coverDraft && (
+        <CoverCropDialog
+          src={coverDraft.src}
+          fileName={coverDraft.name}
+          onClose={() => setCoverDraft(null)}
+          onConfirm={applyCover}
+        />
+      )}
 
       {modal === "new" && (
         <NewBookDialog onClose={() => setModal(null)} onCreate={createBook} />
