@@ -252,7 +252,11 @@ export type UiLanguage =
   | "mk"
   | "hy"
   | "az"
-  | "kk";
+  | "kk"
+  | "bo"
+  | "ug"
+  | "mn"
+  | "za";
 
 export interface LanguageOption {
   key: UiLanguage;
@@ -319,6 +323,10 @@ export const LANGUAGES: LanguageOption[] = [
   { key: "hy", label: "Հայերեն", english: "Armenian", country: "Armenia", countryZh: "亚美尼亚", codes: ["AM"], dir: "ltr" },
   { key: "az", label: "Azərbaycanca", english: "Azerbaijani", country: "Azerbaijan", countryZh: "阿塞拜疆", codes: ["AZ"], dir: "ltr" },
   { key: "kk", label: "Қазақша", english: "Kazakh", country: "Kazakhstan", countryZh: "哈萨克斯坦", codes: ["KZ"], dir: "ltr" },
+  { key: "bo", label: "བོད་ཡིག", english: "Tibetan", country: "China (Tibet / Qinghai / Sichuan / Gansu / Yunnan)", countryZh: "中国（西藏 / 青海 / 四川 / 甘肃 / 云南）", codes: ["BO", "TIB", "藏语", "藏文", "西藏"], dir: "ltr" },
+  { key: "ug", label: "ئۇيغۇرچە", english: "Uyghur", country: "China (Xinjiang)", countryZh: "中国（新疆）", codes: ["UG", "Uighur", "维吾尔语", "维吾尔文", "新疆"], dir: "rtl" },
+  { key: "mn", label: "ᠮᠣᠩᠭᠣᠯ ᠬᠡᠯᠡ", english: "Mongolian", country: "China (Inner Mongolia) / Mongolia", countryZh: "中国（内蒙古）/ 蒙古国", codes: ["MN", "Mongol", "蒙古语", "蒙古文", "内蒙古"], dir: "ltr" },
+  { key: "za", label: "Vahcuengh", english: "Zhuang", country: "China (Guangxi)", countryZh: "中国（广西）", codes: ["ZA", "ZHUANG", "壮语", "壮文", "广西"], dir: "ltr" },
 ];
 
 const HANT_COUNTRY: Record<string, string> = {

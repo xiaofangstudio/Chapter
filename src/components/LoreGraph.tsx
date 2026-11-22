@@ -10,6 +10,7 @@ interface Props {
   onEdit: (entry: LoreEntry) => void;
   onAdd: () => void;
   onDelete: (entry: LoreEntry) => void;
+  worldOnly?: boolean;
 }
 
 type Pos = { x: number; y: number };
@@ -51,7 +52,7 @@ function readImage(file: File, max: number): Promise<string> {
   });
 }
 
-export function LoreGraph({ lore, kind, onSave, onEdit, onAdd, onDelete }: Props) {
+export function LoreGraph({ lore, kind, onSave, onEdit, onAdd, onDelete, worldOnly = false }: Props) {
   const entries = useMemo(
     () => lore.entries.filter((e) => e.kind === kind),
     [lore.entries, kind],
@@ -60,7 +61,7 @@ export function LoreGraph({ lore, kind, onSave, onEdit, onAdd, onDelete }: Props
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
   const [relationForm, setRelationForm] = useState<{ from: string; to: string; label: string } | null>(null);
-  const [worldView, setWorldView] = useState(false);
+  const [worldView, setWorldView] = useState(worldOnly);
   const [pinPlace, setPinPlace] = useState<string | null>(null);
   const boardRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -204,10 +205,12 @@ export function LoreGraph({ lore, kind, onSave, onEdit, onAdd, onDelete }: Props
             <span>{t("上传一张世界地图，再把地点钉上去；位置会随书保存。")}</span>
           </div>
           <div className="lore-world-actions">
-            <button className="btn btn-ghost btn-xs" onClick={() => setWorldView(false)}>
-              <Icon name="outline" size={13} />
-              {t("返回地点网")}
-            </button>
+            {!worldOnly && (
+              <button className="btn btn-ghost btn-xs" onClick={() => setWorldView(false)}>
+                <Icon name="outline" size={13} />
+                {t("返回地点网")}
+              </button>
+            )}
             <label className="btn btn-ghost btn-xs">
               <Icon name="image" size={13} />
               {worldMap.image ? t("更换地图") : t("上传地图")}
@@ -327,7 +330,7 @@ export function LoreGraph({ lore, kind, onSave, onEdit, onAdd, onDelete }: Props
           <Icon name="plus" size={13} />
           {t("新增")}
         </button>
-        {kind === "place" && (
+        {kind === "place" && !worldOnly && (
           <button className="btn btn-ghost btn-xs" onClick={() => setWorldView(true)}>
             <Icon name="pin" size={13} />
             {t("世界观地图")}

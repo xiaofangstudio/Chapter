@@ -162,6 +162,9 @@ function parseProject(raw: RawProject): Project {
     bookOutline: "",
     ...safeParse(raw.book, {}),
   };
+  // 旧工程只存了 cover 文件、没存 coverMode；有封面文件就是自定义封面。
+  // 不补这一步，封面选择器会误以为在用默认封面，先给一排无意义的书脊色。
+  if (meta.cover && !meta.coverMode) meta.coverMode = "custom";
   const outline = normalizeOutline(safeParse(raw.outline, { volumes: [] }));
   const lore = normalizeLore(safeParse(raw.lore, { entries: [] }));
   const bodies: Record<string, string> = {};
@@ -225,6 +228,7 @@ export default function App() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [editorEpoch, setEditorEpoch] = useState(0);
   const [view, setView] = useState<ViewKind>("write");
+  const [loreMode, setLoreMode] = useState<"cards" | "graph" | "map">("cards");
   const [focus, setFocus] = useState(false);
   const [panel, setPanel] = useState(true);
   const [saveState, setSaveState] = useState<SaveState>("idle");
@@ -1002,11 +1006,12 @@ export default function App() {
 
   /** 切到非写作视图前，先把正文刷进保存队列，避免编辑器卸载时丢最后一段。 */
   const changeView = useCallback(
-    (v: ViewKind) => {
+    (v: ViewKind, loreInitial: "cards" | "graph" | "map" = "cards") => {
       if (v !== "write" && view === "write") {
         editorRef.current?.flush();
         void saveAll(true);
       }
+      if (v === "lore") setLoreMode(loreInitial);
       setView(v);
     },
     [saveAll, view],
@@ -2064,9 +2069,11 @@ export default function App() {
             coverUrl={coverUrl}
             saveState={saveState}
             view={view}
+            loreMode={loreMode}
             panel={panel}
             theme={theme}
             onView={changeView}
+            onWorldMap={() => changeView("lore", "map")}
             onTogglePanel={() => setPanel((p) => !p)}
             onToggleTheme={toggleTheme}
             onSettings={() => openSettings()}
@@ -2153,6 +2160,7 @@ export default function App() {
 
               {view === "outline" && (
                 <OutlineBoard
+                  bookPath={project.path}
                   outline={project.outline}
                   activeId={activeId}
                   onOpen={selectChapter}
@@ -2168,6 +2176,7 @@ export default function App() {
 
               {view === "bookOutline" && (
                 <BookOutline
+                  bookPath={project.path}
                   meta={project.meta}
                   chapters={flat}
                   onChange={updateBookOutline}
@@ -2185,6 +2194,7 @@ export default function App() {
                   onDelete={deleteLoreEntry}
                   onInsert={insertLore}
                   onSaveLore={saveLore}
+                  initialMode={loreMode}
                 />
               )}
               </Suspense>

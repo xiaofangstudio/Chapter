@@ -1616,6 +1616,16 @@ struct PrintDoc {
     chapter_break: bool,
     #[serde(default)]
     include_matter: bool,
+    #[serde(default)]
+    blank_first: bool,
+    #[serde(default)]
+    blank_last: bool,
+    #[serde(default)]
+    title_page: bool,
+    #[serde(default)]
+    toc: bool,
+    #[serde(default)]
+    page_numbers: bool,
     title: String,
     author: String,
     blocks: Vec<PrintBlock>,
@@ -1639,6 +1649,7 @@ fn print_margin_mm(name: &str) -> f64 {
 }
 
 fn print_pdf_html(doc: &PrintDoc) -> String {
+    let _ = (doc.chapter_break, doc.include_matter);
     let (pw, ph) = print_paper_mm(&doc.paper);
     let margin = print_margin_mm(&doc.margin);
     let family = if doc.font == "sans" {
@@ -1646,80 +1657,290 @@ fn print_pdf_html(doc: &PrintDoc) -> String {
     } else {
         "\"Noto Serif CJK SC\",\"Songti SC\",\"SimSun\",serif"
     };
-    let mut body = String::new();
+    let inner_w = pw - margin * 2.0;
+    let inner_h = ph - margin * 2.0;
+    let line_mm = doc.font_size * doc.line_height * 0.352778;
+    let cpl = ((inner_w * 2.8346) / (doc.font_size * 1.02)).floor().max(8.0) as usize;
+    let gap_mm = doc.font_size * 0.68 * 0.352778;
+
+    let mut pages: Vec<String> = vec![String::new()];
+    let mut used = 0.0f64;
+    let mut toc_entries: Vec<(String, String, usize)> = Vec::new();
+    let mut ch_i = 0usize;
+
+    fn new_page(pages: &mut Vec<String>, used: &mut f64) {
+        if pages.last().map(|p| p.trim().is_empty()).unwrap_or(true) {
+            return;
+        }
+        pages.push(String::new());
+        *used = 0.0;
+    }
+    fn append(pages: &mut Vec<String>, html: &str) {
+        if let Some(last) = pages.last_mut() {
+            last.push_str(html);
+        }
+    }
+    fn add_para(
+        pages: &mut Vec<String>,
+        used: &mut f64,
+        inner_h: f64,
+        line_mm: f64,
+        cpl: usize,
+        gap_mm: f64,
+        text: &str,
+        quote: bool,
+        indent: bool,
+    ) {
+        let mut rest = text.to_string();
+        let mut first = true;
+        while !rest.is_empty() {
+            let avail_mm = (inner_h - *used).max(0.0);
+            let avail_lines = (avail_mm / line_mm).floor() as usize;
+            if avail_lines == 0 {
+                if pages.last().map(|p| p.trim().is_empty()).unwrap_or(true) {
+                    *used = 0.0;
+                } else {
+                    pages.push(String::new());
+                    *used = 0.0;
+                }
+                continue;
+            }
+            let chars_now = (rest.chars().count()).min(avail_lines.saturating_mul(cpl));
+            if chars_now == 0 {
+                break;
+            }
+            let take: String = rest.chars().take(chars_now).collect();
+            rest = rest.chars().skip(chars_now).collect();
+            let lines_taken = ((chars_now + cpl - 1) / cpl).max(1);
+            let cls = if !first { " class=\"cont\"" } else { "" };
+            let style = if indent && first {
+                " style=\"text-indent:2em\""
+            } else {
+                ""
+            };
+            let html = if quote {
+                format!("<blockquote{}{}>{}</blockquote>", cls, style, xml_escape(&take))
+            } else {
+                format!("<p{}{}>{}</p>", cls, style, xml_escape(&take))
+            };
+            append(pages, &html);
+            *used += lines_taken as f64 * line_mm + gap_mm;
+            first = false;
+            if *used > inner_h && !rest.trim().is_empty() {
+                pages.push(String::new());
+                *used = 0.0;
+            }
+            if chars_now < avail_lines.saturating_mul(cpl) {
+                break;
+            }
+        }
+    }
+
     let mut i = 0usize;
     while i < doc.blocks.len() {
         let b = &doc.blocks[i];
         match b.kind.as_str() {
-            "title" => {
-                let mut author = String::new();
-                if i + 1 < doc.blocks.len() && doc.blocks[i + 1].kind == "author" {
-                    author = doc.blocks[i + 1].text.clone();
-                    i += 1;
-                }
-                body.push_str(&format!(
-                    "<div class=\"cover\"><div class=\"cover-title\">{}</div>{}{}<span>CHAPTER</span></div>",
-                    xml_escape(&b.text),
-                    if author.is_empty() {
-                        String::new()
-                    } else {
-                        format!("<div class=\"cover-author\">{}</div>", xml_escape(&author))
-                    },
-                    ""
-                ));
+            "title" | "author" => {}
+            "pagebreak" => {
+                new_page(&mut pages, &mut used);
             }
-            "author" => {}
-            "pagebreak" => body.push_str("<div class=\"pagebreak\"></div>"),
-            "heading" => body.push_str(&format!(
-                "<h2 class=\"chapter{}\">{}</h2>",
-                if b.page_break { " newpage" } else { "" },
-                xml_escape(&b.text)
-            )),
-            "kicker" => body.push_str(&format!(
-                "<h3 class=\"kicker\">{}</h3>",
-                xml_escape(&b.text)
-            )),
-            "quote" => body.push_str(&format!("<blockquote>{}</blockquote>", xml_escape(&b.text))),
-            "image" => body.push_str(&format!(
-                "<img class=\"inline-img\" src=\"{}\" alt=\"\">",
-                xml_escape(&b.src)
-            )),
-            _ => body.push_str(&format!("<p>{}</p>", xml_escape(&b.text))),
+            "heading" => {
+                if b.page_break {
+                    new_page(&mut pages, &mut used);
+                }
+                if used + line_mm * 4.6 > inner_h {
+                    new_page(&mut pages, &mut used);
+                }
+                ch_i += 1;
+                let page_no = pages.len();
+                toc_entries.push((format!("ch{}", ch_i), b.text.clone(), page_no));
+                append(
+                    &mut pages,
+                    &format!(
+                        "<h2 class=\"chapter\" id=\"ch{}\">{}</h2>",
+                        ch_i,
+                        xml_escape(&b.text)
+                    ),
+                );
+                used += line_mm * 3.2;
+            }
+            "kicker" => {
+                if used + line_mm * 2.5 > inner_h {
+                    new_page(&mut pages, &mut used);
+                }
+                append(
+                    &mut pages,
+                    &format!("<h3 class=\"kicker\">{}</h3>", xml_escape(&b.text)),
+                );
+                used += line_mm * 1.9;
+            }
+            "image" => {
+                let img_h = if b.width > 0.0 && b.height > 0.0 {
+                    (inner_w * b.height / b.width).min(inner_h * 0.72)
+                } else {
+                    inner_w * 0.62
+                };
+                if used + img_h + 4.0 > inner_h {
+                    new_page(&mut pages, &mut used);
+                }
+                append(
+                    &mut pages,
+                    &format!("<img class=\"inline-img\" src=\"{}\" alt=\"\">", xml_escape(&b.src)),
+                );
+                used += img_h + 4.0;
+            }
+            "quote" => add_para(
+                &mut pages,
+                &mut used,
+                inner_h,
+                line_mm,
+                cpl,
+                gap_mm,
+                &b.text,
+                true,
+                false,
+            ),
+            _ => add_para(
+                &mut pages,
+                &mut used,
+                inner_h,
+                line_mm,
+                cpl,
+                gap_mm,
+                &b.text,
+                false,
+                doc.indent > 0.0,
+            ),
         }
         i += 1;
     }
+    if pages.last().map(|p| p.trim().is_empty()).unwrap_or(true) && pages.len() == 1 {
+        pages[0] = "<p class=\"empty\">&nbsp;</p>".into();
+    }
+
+    let body_pages = pages;
+    let total_body = body_pages.len();
+    let toc_per_page = (((inner_h - 20.0).max(40.0)) / 7.0).floor().max(10.0) as usize;
+    let toc_pages = if doc.toc && !toc_entries.is_empty() {
+        ((toc_entries.len() + toc_per_page - 1) / toc_per_page).max(1)
+    } else {
+        0
+    };
+
+    let mut out = String::new();
+    if doc.blank_first {
+        out.push_str("<div class=\"page blank\"></div>");
+    }
+    if doc.title_page {
+        out.push_str(&format!(
+            "<div class=\"page title-page\"><div class=\"tp-inner\"><span class=\"tp-mark\">CHAPTER</span><h1>{}</h1>{}{}<span class=\"tp-foot\">{}</span></div></div>",
+            xml_escape(&doc.title),
+            if doc.author.trim().is_empty() {
+                String::new()
+            } else {
+                format!("<div class=\"tp-author\">{}</div>", xml_escape(&doc.author))
+            },
+            if doc.author.trim().is_empty() { "" } else { "<span class=\"tp-rule\"></span>" },
+            xml_escape(&doc.title),
+        ));
+    }
+    if toc_pages > 0 {
+        for p in 0..toc_pages {
+            let start = p * toc_per_page;
+            let end = ((p + 1) * toc_per_page).min(toc_entries.len());
+            let mut rows = String::new();
+            for (id, title, page) in &toc_entries[start..end] {
+                rows.push_str(&format!(
+                    "<div class=\"toc-row\"><a href=\"#{}\">{}</a><i></i><b>{}</b></div>",
+                    id,
+                    xml_escape(title),
+                    page
+                ));
+            }
+            out.push_str(&format!(
+                "<div class=\"page toc-page\">{}<div class=\"toc-title\">{}</div><div class=\"toc-list\">{}</div><div class=\"folio roman\">{}</div></div>",
+                if p == 0 { "" } else { "" },
+                xml_escape(if p == 0 { "目录" } else { "目录（续）" }),
+                rows,
+                p + 1
+            ));
+        }
+    }
+    for (idx, page) in body_pages.iter().enumerate() {
+        let n = idx + 1;
+        out.push_str(&format!(
+            "<div class=\"page body-page\">{}{}</div>",
+            page,
+            if doc.page_numbers {
+                format!("<div class=\"folio\">{}</div>", n)
+            } else {
+                String::new()
+            }
+        ));
+    }
+    if doc.blank_last {
+        out.push_str("<div class=\"page blank\"></div>");
+    }
+
+    let page_break_css = "break-after: page; page-break-after: always;";
+    let _ = total_body;
     format!(
         "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\"><title>{}</title><style>\
-         @page {{ size: {}mm {}mm; margin: {}mm; }}\
+         @page {{ size: {}mm {}mm; margin: 0; }}\
          * {{ box-sizing: border-box; }}\
          html, body {{ margin: 0; padding: 0; background: #fff; }}\
-         body {{ font-family: {}; font-size: {}pt; line-height: {}; color: #24221e; text-align: justify; -webkit-print-color-adjust: exact; }}\
-         .cover {{ height: {}mm; display: flex; flex-direction: column; align-items: center; justify-content: center; page-break-after: always; }}\
-         .cover-title {{ font-size: {}pt; font-weight: 600; letter-spacing: 0.08em; line-height: 1.3; text-align: center; }}\
-         .cover-author {{ margin-top: 8mm; font-size: {}pt; letter-spacing: 0.16em; color: #5d5750; }}\
-         .cover span {{ margin-top: auto; font-size: 8pt; letter-spacing: 0.18em; color: #9a938a; }}\
-         h2.chapter {{ font-size: {}pt; font-weight: 600; text-align: center; margin: 4mm 0 5mm; line-height: 1.35; letter-spacing: 0.05em; }}\
-         h2.chapter.newpage {{ page-break-before: always; }}\
-         h3.kicker {{ font-size: {}pt; font-weight: 500; text-align: center; color: #6a6258; margin: 2mm 0 3mm; }}\
-         p {{ margin: 0 0 0.68em; text-indent: {}em; orphans: 2; widows: 2; }}\
-         blockquote {{ margin: 0.6em 0; padding-left: 4mm; border-left: 0.6mm solid #b9afa2; color: #5e574f; }}\
-         img.inline-img {{ display: block; max-width: 100%; margin: 3mm auto 4mm; }}\
-         .pagebreak {{ page-break-after: always; height: 0; }}\
+         body {{ font-family: {}; font-size: {}pt; line-height: {}; color: #24221e; }}\
+         .page {{ position: relative; width: {}mm; height: {}mm; padding: {}mm; overflow: hidden; background: #fff; {} }}\
+         .page:last-child {{ break-after: auto; page-break-after: auto; }}\
+         .page.blank {{ background: #fff; }}\
+         .title-page {{ display: flex; align-items: center; justify-content: center; text-align: center; }}\
+         .tp-inner {{ width: 100%; }}\
+         .tp-mark {{ display: block; font-size: 8pt; letter-spacing: .28em; color: #9a938a; margin-bottom: 18mm; }}\
+         .tp-inner h1 {{ font-size: {}pt; line-height: 1.35; letter-spacing: .08em; margin: 0 0 8mm; font-weight: 600; }}\
+         .tp-rule {{ display: block; width: 18mm; height: .3mm; background: #b9afa2; margin: 0 auto 7mm; }}\
+         .tp-author {{ font-size: {}pt; letter-spacing: .16em; color: #5d5750; }}\
+         .tp-foot {{ position: absolute; left: {}mm; right: {}mm; bottom: {}mm; font-size: 8pt; letter-spacing: .18em; color: #b5ada4; }}\
+         .toc-page .toc-title {{ text-align: center; font-size: {}pt; font-weight: 600; letter-spacing: .12em; margin: 2mm 0 9mm; }}\
+         .toc-list {{ font-size: {}pt; }}\
+         .toc-row {{ display: flex; align-items: baseline; gap: 3mm; height: 7mm; }}\
+         .toc-row a {{ color: #24221e; text-decoration: none; max-width: 78%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }}\
+         .toc-row i {{ flex: 1; border-bottom: .22mm dotted #b7aea3; transform: translateY(-1mm); }}\
+         .toc-row b {{ font-weight: 400; min-width: 7mm; text-align: right; }}\
+         h2.chapter {{ font-size: {}pt; font-weight: 600; text-align: center; margin: 0 0 6mm; line-height: 1.35; letter-spacing: .04em; break-after: avoid; }}\
+         h3.kicker {{ font-size: {}pt; font-weight: 500; text-align: center; color: #6a6258; margin: 0 0 4mm; break-after: avoid; }}\
+         p {{ margin: 0 0 {}pt; text-align: justify; orphans: 2; widows: 2; }}\
+         p.cont {{ text-indent: 0 !important; }}\
+         blockquote {{ margin: {}pt 0; padding-left: 4mm; border-left: .6mm solid #b9afa2; color: #5e574f; }}\
+         blockquote.cont {{ text-indent: 0 !important; }}\
+         img.inline-img {{ display: block; max-width: 100%; max-height: {}mm; margin: 2mm auto 4mm; }}\
+         .folio {{ position: absolute; left: 0; right: 0; bottom: {}mm; text-align: center; font-size: 8.5pt; color: #8a8278; }}\
+         .folio.roman {{ font-size: 8pt; letter-spacing: .08em; }}\
+         .empty {{ color: transparent; }}\
          </style></head><body>{}</body></html>",
         xml_escape(&doc.title),
         pw,
         ph,
-        margin,
         family,
         doc.font_size,
         doc.line_height,
-        ph - margin * 2.0,
-        doc.font_size * 2.4,
+        pw,
+        ph - 0.2,
+        margin,
+        page_break_css,
+        doc.font_size * 2.5,
         doc.font_size * 1.1,
-        doc.font_size * 1.5,
+        margin,
+        margin,
+        (margin / 2.0).max(6.0),
+        doc.font_size * 1.6,
         doc.font_size * 0.92,
-        doc.indent,
-        body
+        doc.font_size * 1.5,
+        doc.font_size * 0.95,
+        doc.font_size * 0.68,
+        doc.font_size * 0.55,
+        inner_h * 0.7,
+        (margin / 2.0).max(6.0),
+        out
     )
 }
 
@@ -1837,42 +2058,76 @@ fn print_docx(doc: &PrintDoc, dest: &Path) -> Result<(), String> {
     let mut paras = String::new();
     let mut i = 0usize;
     let mut pic_id = 0;
+
+    let page_break_para = || {
+        docx_p(
+            "<w:r><w:br w:type=\"page\"/></w:r>",
+            "left",
+            0.0,
+            1.0,
+            0.0,
+            false,
+        )
+    };
+    let sect_pr = |footer: bool, start: Option<u32>| {
+        format!(
+            "<w:sectPr>{}<w:type w:val=\"nextPage\"/><w:pgSz w:w=\"{}\" w:h=\"{}\"/><w:pgMar w:top=\"{m}\" w:right=\"{m}\" w:bottom=\"{m}\" w:left=\"{m}\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/>{pg}<w:cols w:space=\"720\"/><w:docGrid w:linePitch=\"312\"/></w:sectPr>",
+            if footer { "<w:footerReference w:type=\"default\" r:id=\"rIdFooter1\"/>" } else { "" },
+            (pw * 56.6929) as i64,
+            (ph * 56.6929) as i64,
+            m = (margin * 56.6929) as i64,
+            pg = start
+                .map(|n| format!("<w:pgNumType w:fmt=\"decimal\" w:start=\"{}\"/>", n))
+                .unwrap_or_default()
+        )
+    };
+    let section_para = |sect: &str| format!("<w:p><w:pPr>{}</w:pPr></w:p>", sect);
+
+    let front_sect = sect_pr(false, None);
+    let body_sect = sect_pr(doc.page_numbers, Some(1));
+
+    if doc.blank_first {
+        paras.push_str(&section_para(&front_sect));
+    }
+    if doc.title_page {
+        let mark = docx_run("CHAPTER", doc.font_size * 0.62, false, false, &doc.font);
+        paras.push_str(&format!(
+            "<w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:before=\"{}\" w:after=\"240\"/></w:pPr>{}</w:p>",
+            (content_twips / 3.0) as i64,
+            mark
+        ));
+        let run = docx_run(&doc.title, doc.font_size * 2.5, true, false, &doc.font);
+        paras.push_str(&format!(
+            "<w:p><w:pPr><w:jc w:val=\"center\"/><w:spacing w:before=\"160\" w:after=\"360\"/></w:pPr>{}</w:p>",
+            run
+        ));
+        if !doc.author.trim().is_empty() {
+            let arun = docx_run(&doc.author, doc.font_size * 1.1, false, false, &doc.font);
+            paras.push_str(&docx_p(&arun, "center", 0.6, 1.2, 0.0, false));
+        }
+        paras.push_str(&section_para(&front_sect));
+    }
+    if doc.toc {
+        let run = docx_run("目录", doc.font_size * 1.6, true, false, &doc.font);
+        paras.push_str(&docx_p(&run, "center", 0.8, 1.3, 0.0, false));
+        paras.push_str(
+            "<w:p><w:fldSimple w:instr=\" TOC \\o &quot;1-2&quot; \\h \\z \\u \"><w:r><w:rPr><w:sz w:val=\"21\"/></w:rPr><w:t>打开 Word 后选择“更新域”生成目录</w:t></w:r></w:fldSimple></w:p>",
+        );
+        paras.push_str(&section_para(&front_sect));
+    }
+
     while i < doc.blocks.len() {
         let b = &doc.blocks[i];
         match b.kind.as_str() {
-            "title" => {
-                let mut author = String::new();
-                if i + 1 < doc.blocks.len() && doc.blocks[i + 1].kind == "author" {
-                    author = doc.blocks[i + 1].text.clone();
-                    i += 1;
-                }
-                let run = docx_run(&b.text, doc.font_size * 2.4, true, false, &doc.font);
-                paras.push_str(&docx_p(&run, "center", 0.8, 1.3, 0.0, false));
-                if !author.is_empty() {
-                    let arun = docx_run(&author, doc.font_size * 1.05, false, false, &doc.font);
-                    paras.push_str(&docx_p(&arun, "center", 0.6, 1.2, 0.0, false));
-                }
-                paras.push_str(&docx_p(
-                    "<w:r><w:br w:type=\"page\"/></w:r>",
-                    "left",
-                    0.0,
-                    1.0,
-                    0.0,
-                    false,
-                ));
-            }
-            "author" => {}
-            "pagebreak" => paras.push_str(&docx_p(
-                "<w:r><w:br w:type=\"page\"/></w:r>",
-                "left",
-                0.0,
-                1.0,
-                0.0,
-                false,
-            )),
+            "title" | "author" => {}
+            "pagebreak" => paras.push_str(&page_break_para()),
             "heading" => {
                 let run = docx_run(&b.text, doc.font_size * 1.45, true, false, &doc.font);
-                paras.push_str(&docx_p(&run, "center", 0.9, 1.35, 0.0, b.page_break));
+                paras.push_str(&format!(
+                    "<w:p><w:pPr>{}<w:outlineLvl w:val=\"0\"/><w:jc w:val=\"center\"/><w:spacing w:after=\"360\" w:line=\"420\" w:lineRule=\"auto\"/></w:pPr>{}</w:p>",
+                    if b.page_break { "<w:pageBreakBefore/>" } else { "" },
+                    run
+                ));
             }
             "kicker" => {
                 let run = docx_run(&b.text, doc.font_size * 0.9, false, false, &doc.font);
@@ -1928,7 +2183,16 @@ fn print_docx(doc: &PrintDoc, dest: &Path) -> Result<(), String> {
         }
         i += 1;
     }
+    if doc.blank_last {
+        paras.push_str(&section_para(&body_sect));
+        paras.push_str(&docx_p("", "left", 0.0, 1.0, 0.0, false));
+    }
 
+    let final_sect = if doc.blank_last {
+        sect_pr(false, None)
+    } else {
+        body_sect.clone()
+    };
     let document = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
          <w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" \
@@ -1936,16 +2200,9 @@ fn print_docx(doc: &PrintDoc, dest: &Path) -> Result<(), String> {
          xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" \
          xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" \
          xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">\
-         <w:body>{}\
-         <w:sectPr><w:pgSz w:w=\"{}\" w:h=\"{}\"/><w:pgMar w:top=\"{}\" w:right=\"{}\" w:bottom=\"{}\" w:left=\"{}\" w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/><w:cols w:space=\"720\"/><w:docGrid w:linePitch=\"312\"/></w:sectPr>\
+         <w:body>{}{}\
          </w:body></w:document>",
-        paras,
-        (pw * 56.6929) as i64,
-        (ph * 56.6929) as i64,
-        (margin * 56.6929) as i64,
-        (margin * 56.6929) as i64,
-        (margin * 56.6929) as i64,
-        (margin * 56.6929) as i64,
+        paras, final_sect
     );
 
     let mut defaults = String::new();
@@ -1968,6 +2225,8 @@ fn print_docx(doc: &PrintDoc, dest: &Path) -> Result<(), String> {
          <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
          <Default Extension=\"xml\" ContentType=\"application/xml\"/>\
          {}<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
+         <Override PartName=\"/word/settings.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml\"/>\
+         <Override PartName=\"/word/footer1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml\"/>\
          </Types>",
         defaults
     );
@@ -1977,9 +2236,15 @@ fn print_docx(doc: &PrintDoc, dest: &Path) -> Result<(), String> {
          </Relationships>";
     let doc_rels = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
-         <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">{}</Relationships>",
+         <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">{}<Relationship Id=\"rIdSettings\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings\" Target=\"settings.xml\"/><Relationship Id=\"rIdFooter1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer\" Target=\"footer1.xml\"/></Relationships>",
         rels
     );
+
+    let settings_xml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:settings xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:updateFields w:val=\"true\"/></w:settings>";
+    let footer_xml = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\
+        <w:ftr xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+        <w:p><w:pPr><w:jc w:val=\"center\"/></w:pPr><w:r><w:rPr><w:sz w:val=\"17\"/><w:color w:val=\"8A8278\"/></w:rPr><w:fldSimple w:instr=\" PAGE \"><w:t>1</w:t></w:fldSimple></w:r></w:p></w:ftr>";
 
     let file = File::create(dest).map_err(|e| format!("创建 Word 失败：{}", e))?;
     let mut zip = ZipWriter::new(file);
@@ -1989,6 +2254,8 @@ fn print_docx(doc: &PrintDoc, dest: &Path) -> Result<(), String> {
         ("_rels/.rels", root_rels.as_bytes()),
         ("word/document.xml", document.as_bytes()),
         ("word/_rels/document.xml.rels", doc_rels.as_bytes()),
+        ("word/settings.xml", settings_xml.as_bytes()),
+        ("word/footer1.xml", footer_xml.as_bytes()),
     ] {
         zip.start_file(name, opt).map_err(|e| e.to_string())?;
         zip.write_all(data).map_err(|e| e.to_string())?;
@@ -2238,6 +2505,29 @@ fn image_data(path: String) -> Result<String, String> {
         _ => return Err("背景图支持 PNG / JPG / WEBP / GIF / BMP".into()),
     };
     let bytes = fs::read(&p).map_err(|e| format!("读取图片失败：{e}"))?;
+    Ok(format!("data:{mime};base64,{}", B64.encode(bytes)))
+}
+
+#[tauri::command]
+fn font_data(path: String) -> Result<String, String> {
+    let p = PathBuf::from(&path);
+    let meta = fs::metadata(&p).map_err(|e| format!("读取字体失败：{e}"))?;
+    if meta.len() > 32 * 1024 * 1024 {
+        return Err("字体文件请不要超过 32 MB".into());
+    }
+    let ext = p
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let mime = match ext.as_str() {
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        _ => return Err("字体支持 TTF / OTF / WOFF / WOFF2".into()),
+    };
+    let bytes = fs::read(&p).map_err(|e| format!("读取字体失败：{e}"))?;
     Ok(format!("data:{mime};base64,{}", B64.encode(bytes)))
 }
 
@@ -3486,6 +3776,7 @@ pub fn run() {
             count_text,
             read_import_file,
             image_data,
+            font_data,
             mcp_status,
             mcp_set_enabled,
             mcp_set_project,
@@ -3603,6 +3894,11 @@ mod tests {
             indent: 2.0,
             chapter_break: true,
             include_matter: true,
+            blank_first: true,
+            blank_last: true,
+            title_page: true,
+            toc: true,
+            page_numbers: true,
             title: "测试书".into(),
             author: "小方".into(),
             blocks: vec![
@@ -3628,6 +3924,9 @@ mod tests {
             print_pdf(&doc, &pdf).unwrap();
             assert!(fs::metadata(&pdf).unwrap().len() > 10_000);
         }
-        let _ = fs::remove_dir_all(&dir);
+        eprintln!("PRINT_TEST_DIR={}", dir.display());
+        if std::env::var("CHAPTER_KEEP_PRINT").is_err() {
+            let _ = fs::remove_dir_all(&dir);
+        }
     }
 }

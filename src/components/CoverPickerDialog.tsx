@@ -37,8 +37,11 @@ export function CoverPickerDialog({
   onPickFile,
 }: Props) {
   const fallbackStyle = resolveCoverTemplate(coverStyle, title);
+  // 以书里真实保存的模式打开，而不是看封面图是否加载完成：
+  // 自定义封面是异步读出来的，若等 customCoverUrl 再决定，弹窗会先停在默认封面，
+  // 用户看到的就是一排没有意义的书脊色板。
   const [mode, setMode] = useState<"default" | "custom">(
-    coverMode === "custom" && customCoverUrl ? "custom" : "default",
+    coverMode === "custom" ? "custom" : "default",
   );
   const [style, setStyle] = useState(fallbackStyle.id);
   const [spine, setSpine] = useState(spineColor || fallbackStyle.spine);
@@ -191,24 +194,35 @@ export function CoverPickerDialog({
 
           <section className="cover-picker-spine">
             <div>
-              <h3>{t("书脊颜色")}</h3>
-              <p>{t("默认封面自带书脊色；也可以在这里统一改。")}</p>
+              <h3>{mode === "custom" ? t("书脊来自封面") : t("书脊颜色")}</h3>
+              <p>
+                {mode === "custom"
+                  ? t("自定义封面会自动裁左侧一竖列做书脊，并保留竖排书名，不再需要单独选颜色。")
+                  : t("默认封面自带书脊色；也可以在这里统一改。")}
+              </p>
             </div>
-            <div className="spine-swatches">
-              {SPINE_SWATCHES.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  className={`spine-swatch${spine === c ? " on" : ""}`}
-                  style={{ background: c }}
-                  title={c}
-                  onClick={() => setSpine(c)}
-                />
-              ))}
-              <label className="spine-swatch custom" title={t("自定义颜色")}>
-                <input type="color" value={spine} onChange={(e) => setSpine(e.target.value)} />
-              </label>
-            </div>
+            {mode === "custom" ? (
+              <span className="cover-spine-auto">
+                <Icon name="image" size={13} />
+                {t("左侧一列 · 自动")}
+              </span>
+            ) : (
+              <div className="spine-swatches">
+                {SPINE_SWATCHES.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className={`spine-swatch${spine === c ? " on" : ""}`}
+                    style={{ background: c }}
+                    title={c}
+                    onClick={() => setSpine(c)}
+                  />
+                ))}
+                <label className="spine-swatch custom" title={t("自定义颜色")}>
+                  <input type="color" value={spine} onChange={(e) => setSpine(e.target.value)} />
+                </label>
+              </div>
+            )}
           </section>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { Project } from "../types";
@@ -36,8 +36,55 @@ export interface PrintOptions {
   indent: number;
   chapterBreak: boolean;
   includeMatter: boolean;
+  blankFirst: boolean;
+  blankLast: boolean;
+  titlePage: boolean;
+  toc: boolean;
+  pageNumbers: boolean;
 }
 
+const DEFAULT_OPTS: PrintOptions = {
+  paper: "A4",
+  margin: "normal",
+  font: "serif",
+  fontSize: 11,
+  lineHeight: 1.75,
+  indent: 2,
+  chapterBreak: true,
+  includeMatter: true,
+  blankFirst: true,
+  blankLast: true,
+  titlePage: true,
+  toc: true,
+  pageNumbers: true,
+};
+
+const PRESETS: { id: string; label: string; opts: PrintOptions }[] = [
+  {
+    id: "book-a5",
+    label: "成书 · A5",
+    opts: { ...DEFAULT_OPTS, paper: "A5", fontSize: 10.5, lineHeight: 1.8 },
+  },
+  {
+    id: "submit-a4",
+    label: "投稿 · A4",
+    opts: {
+      ...DEFAULT_OPTS,
+      paper: "A4",
+      margin: "wide",
+      fontSize: 12,
+      lineHeight: 2,
+      blankFirst: false,
+      blankLast: false,
+      toc: false,
+    },
+  },
+  {
+    id: "shop-a4",
+    label: "打印店 · A4",
+    opts: { ...DEFAULT_OPTS, paper: "A4", margin: "narrow", blankFirst: false, blankLast: false },
+  },
+];
 const PAPER: Record<Paper, [number, number]> = {
   A4: [210, 297],
   A5: [148, 210],
@@ -118,15 +165,14 @@ export function PrintStudio({
   onClose: () => void;
 }) {
   const [target, setTarget] = useState<PrintTarget>(initialTarget);
-  const [opts, setOpts] = useState<PrintOptions>({
-    paper: "A4",
-    margin: "normal",
-    font: "serif",
-    fontSize: 11,
-    lineHeight: 1.75,
-    indent: 2,
-    chapterBreak: true,
-    includeMatter: true,
+  const [opts, setOpts] = useState<PrintOptions>(() => {
+    try {
+      const raw = localStorage.getItem("chapter.printPreset");
+      if (raw) return { ...DEFAULT_OPTS, ...(JSON.parse(raw) as Partial<PrintOptions>) };
+    } catch {
+      /* ignore */
+    }
+    return DEFAULT_OPTS;
   });
   const [zoom, setZoom] = useState(0.82);
   const [previewScope, setPreviewScope] = useState<"chapter" | "book">("chapter");
@@ -138,6 +184,7 @@ export function PrintStudio({
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState("");
   const [doneOk, setDoneOk] = useState(false);
+  const [presetSaved, setPresetSaved] = useState(false);
 
   const chapters = useMemo(
     () =>
@@ -148,6 +195,87 @@ export function PrintStudio({
   );
 
   const focused = chapters.find((c) => c.id === chapter) ?? chapters[0];
+
+  /* 目录页码必须在排完正文后才知道。这里按与后端一致的字号/版心规则先估一遍，
+     让预览里的目录和导出后的实际页码基本一致；导出时后端会再精确重算。 */
+  const measurePagination = useCallback(() => {
+    const [pw, ph] = PAPER[opts.paper];
+    const [mt, ml] = MARGIN[opts.margin];
+    const innerW = (pw - ml * 2) * 2.8346;
+    const innerH = (ph - mt * 2) * 2.8346;
+    const linesPerPage = Math.max(8, Math.floor(innerH / (opts.fontSize * opts.lineHeight)));
+    const charsPerLine = Math.max(10, Math.floor(innerW / (opts.fontSize * 1.02)));
+    const starts: Record<string, number> = {};
+    let page = 1;
+    let used = 0;
+    let first = true;
+    for (const c of chapters) {
+      if (opts.chapterBreak && !first) {
+        page += 1;
+        used = 0;
+      }
+      first = false;
+      starts[c.id] = page;
+      used += 3.2;
+      if (used >= linesPerPage) {
+        page += 1;
+        used = 0;
+      }
+      for (let k = 0; k < (images[c.id]?.length ?? 0); k += 1) {
+        if (used + 7 > linesPerPage) {
+          page += 1;
+          used = 0;
+        }
+        used += 7;
+      }
+      const paras = c.body.replace(/\r\n/g, "\n").split(/\n+/).map(plain).filter(Boolean);
+      for (const text of paras) {
+        const need = Math.max(1, Math.ceil(text.length / charsPerLine)) + 0.45;
+        if (used + need > linesPerPage) {
+          page += 1;
+          used = 0;
+        }
+        used += need;
+      }
+    }
+    const tocPerPage = Math.max(12, Math.floor((ph - MARGIN[opts.margin][0] * 2 - 18) / 7.2));
+    return { starts, tocPerPage, linesPerPage, charsPerLine, total: page };
+  }, [chapters, opts, images]);
+
+  /* 整本书可能几十万字：进工作台时先出界面，再把目录页码测算放到空闲时段，
+     避免 i18n 懒加载和全文扫描一起堵住首帧。 */
+  const [pagination, setPagination] = useState<{
+    starts: Record<string, number>;
+    tocPerPage: number;
+    linesPerPage: number;
+    charsPerLine: number;
+    total: number;
+  }>({ starts: {}, tocPerPage: 20, linesPerPage: 30, charsPerLine: 35, total: 1 });
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      const idle =
+        window.requestIdleCallback ??
+        ((fn: IdleRequestCallback) => window.setTimeout(() => fn({} as IdleDeadline), 240));
+      idle(() => {
+        if (cancelled) return;
+        setPagination(measurePagination());
+      });
+    }, 60);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [measurePagination]);
+
+  const tocChunks = useMemo(() => {
+    const rows = chapters.map((c) => ({ ...c, page: pagination.starts[c.id] ?? 1 }));
+    const per = pagination.tocPerPage;
+    const chunks: (typeof rows)[] = [];
+    for (let i = 0; i < rows.length; i += per) chunks.push(rows.slice(i, i + per));
+    return chunks.length ? chunks : [[]];
+  }, [chapters, pagination]);
 
   const [pw, ph] = PAPER[opts.paper];  const [mt, ml] = MARGIN[opts.margin];
   const scale = 3.7795 * zoom;
@@ -259,10 +387,20 @@ export function PrintStudio({
     }
   };
 
+  const pageStyle = {
+    width: sheetW,
+    minHeight: ph * scale,
+    padding: `${padY}px ${padX}px`,
+    fontFamily: opts.font === "serif" ? "var(--font-serif)" : "var(--font-sans)",
+    fontSize: previewFont,
+    lineHeight: opts.lineHeight,
+  };
+
   const chapterNode = (c: (typeof chapters)[number], withBreak: boolean) => (
-    <section
+    <div
       key={c.id}
-      className={`ps-chapter${withBreak && opts.chapterBreak ? " ps-break" : ""}`}
+      className={`ps-page ps-chapter${withBreak && opts.chapterBreak ? " ps-break" : ""}`}
+      style={pageStyle}
     >
       {c.volume && c.volume !== t("正文") && <h3>{c.volume}</h3>}
       <h2>{c.title}</h2>
@@ -270,7 +408,7 @@ export function PrintStudio({
         <img key={img.id} className="ps-inline-img" src={img.src} alt="" />
       ))}
       <div dangerouslySetInnerHTML={{ __html: mdToHtml(c.body) }} />
-    </section>
+    </div>
   );
 
   return (
@@ -302,6 +440,94 @@ export function PrintStudio({
 
       <div className="ps-body">
         <aside className="ps-panel">
+          <section className="ps-sec">
+            <h3>{t("排版预设")}</h3>
+            <div className="ps-presets">
+              {PRESETS.map((p) => (
+                <button
+                  key={p.id}
+                  className={opts.paper === p.opts.paper && opts.blankFirst === p.opts.blankFirst && opts.toc === p.opts.toc ? "on" : ""}
+                  onClick={() => {
+                    setOpts(p.opts);
+                    setPresetSaved(false);
+                  }}
+                >
+                  {t(p.label)}
+                </button>
+              ))}
+            </div>
+            <div className="ps-preset-save">
+              <button
+                className="btn btn-ghost btn-xs"
+                onClick={() => {
+                  try {
+                    localStorage.setItem("chapter.printPreset", JSON.stringify(opts));
+                    setPresetSaved(true);
+                    window.setTimeout(() => setPresetSaved(false), 1800);
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+              >
+                <Icon name="check" size={12} />
+                {presetSaved ? t("已保存为预设") : t("保存当前设置为预设")}
+              </button>
+              <button
+                className="btn btn-ghost btn-xs"
+                onClick={() => setOpts({ ...DEFAULT_OPTS })}
+              >
+                {t("恢复默认")}
+              </button>
+            </div>
+          </section>
+
+          <section className="ps-sec">
+            <h3>{t("成品结构")}</h3>
+            <label className="ps-check">
+              <input
+                type="checkbox"
+                checked={opts.blankFirst}
+                onChange={(e) => setOpts({ ...opts, blankFirst: e.target.checked })}
+              />
+              <span>{t("最前面加一张空白页")}</span>
+            </label>
+            <label className="ps-check">
+              <input
+                type="checkbox"
+                checked={opts.titlePage}
+                onChange={(e) => setOpts({ ...opts, titlePage: e.target.checked })}
+              />
+              <span>{t("加书名页：居中书名与作者")}</span>
+            </label>
+            <label className="ps-check">
+              <input
+                type="checkbox"
+                checked={opts.toc}
+                onChange={(e) => setOpts({ ...opts, toc: e.target.checked })}
+              />
+              <span>{t("自动生成目录与每章页码")}</span>
+            </label>
+            <label className="ps-check">
+              <input
+                type="checkbox"
+                checked={opts.pageNumbers}
+                onChange={(e) => setOpts({ ...opts, pageNumbers: e.target.checked })}
+              />
+              <span>{t("正文页脚显示页码")}</span>
+            </label>
+            <label className="ps-check">
+              <input
+                type="checkbox"
+                checked={opts.blankLast}
+                onChange={(e) => setOpts({ ...opts, blankLast: e.target.checked })}
+              />
+              <span>{t("最后面加一张空白页")}</span>
+            </label>
+            <p className="ps-hint">
+              {t("空白页不会印页码；目录页码从正文第一页算起。")}
+            </p>
+          </section>
+
           <section className="ps-sec">
             <h3>{t("纸张与版心")}</h3>
             <label className="ps-row">
@@ -481,36 +707,66 @@ export function PrintStudio({
         </aside>
 
         <main className="ps-stage">
-          <div
-            className="ps-sheet"
-            style={{
-              width: sheetW,
-              minHeight: ph * scale,
-              padding: `${padY}px ${padX}px`,
-              fontFamily: opts.font === "serif" ? "var(--font-serif)" : "var(--font-sans)",
-              fontSize: previewFont,
-              lineHeight: opts.lineHeight,
-            }}
-          >
+          <div className="ps-stack" style={{ width: sheetW }}>
             {previewScope === "book" && (
               <>
-                <div className="ps-title-page" style={{ minHeight: ph * scale - padY * 2 }}>
-                  <b>{project.meta.title || "未命名"}</b>
-                  {project.meta.author && <em>{project.meta.author}</em>}
-                  <span>Chapter · {t("自打印")}</span>
-                </div>
+                {opts.blankFirst && (
+                  <div className="ps-page ps-title-page ps-blank-page" style={pageStyle}>
+                    <span className="ps-blank-mark">{t("空白页")}</span>
+                  </div>
+                )}
+                {opts.titlePage && (
+                  <div className="ps-page ps-title-page" style={pageStyle}>
+                    <div className="ps-title-main">
+                      <b>{project.meta.title || "未命名"}</b>
+                      {project.meta.author && <em>{project.meta.author}</em>}
+                    </div>
+                    <span className="ps-title-foot">Chapter · {t("自打印")}</span>
+                  </div>
+                )}
+                {opts.toc &&
+                  tocChunks.map((rows, ti) => {
+                    let lastVol = "";
+                    return (
+                      <div className="ps-page ps-chapter ps-toc-sheet" key={`toc-${ti}`} style={pageStyle}>
+                        <h2>{ti === 0 ? t("目录") : `${t("目录")} · ${ti + 1}`}</h2>
+                        <div className="ps-toc">
+                          {rows.map((c) => {
+                            const vol = c.volume !== t("正文") ? c.volume : "";
+                            const showVol = Boolean(vol && vol !== lastVol);
+                            lastVol = vol;
+                            return (
+                              <Fragment key={c.id}>
+                                {showVol && <div className="ps-toc-vol">{vol}</div>}
+                                <div className="ps-toc-row">
+                                  <span className="ps-toc-name">{c.title}</span>
+                                  <span className="ps-toc-dots" />
+                                  <span className="ps-toc-page">{c.page}</span>
+                                </div>
+                              </Fragment>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
                 {opts.includeMatter && project.meta.frontMatter?.trim() && (
-                  <section className="ps-chapter ps-matter">
+                  <div className="ps-page ps-chapter ps-matter" style={pageStyle}>
                     <h2>{t("前言")}</h2>
                     <div dangerouslySetInnerHTML={{ __html: mdToHtml(project.meta.frontMatter) }} />
-                  </section>
+                  </div>
                 )}
                 {chapters.slice(0, bookLimit).map((c) => chapterNode(c, true))}
                 {opts.includeMatter && project.meta.backMatter?.trim() && (
-                  <section className="ps-chapter ps-break ps-matter">
+                  <div className="ps-page ps-chapter ps-matter" style={pageStyle}>
                     <h2>{t("后记")}</h2>
                     <div dangerouslySetInnerHTML={{ __html: mdToHtml(project.meta.backMatter) }} />
-                  </section>
+                  </div>
+                )}
+                {opts.blankLast && (
+                  <div className="ps-page ps-title-page ps-blank-page" style={pageStyle}>
+                    <span className="ps-blank-mark">{t("空白页")}</span>
+                  </div>
                 )}
               </>
             )}

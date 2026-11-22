@@ -259,6 +259,7 @@ export function WorkspaceHome({
   }, [books, pin]);
 
   const isPinned = Boolean(current && current.path === pin);
+  const currentCover = current ? coverFor(current, covers) : undefined;
   const hour = clock.getHours();
   const dateText = clock.toLocaleDateString(locale, { month: "long", day: "numeric", weekday: "long" });
   const timeText = clock.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
@@ -466,7 +467,7 @@ which === "home" ? (
                     >
                       <div
                         ref={bookCoverRef}
-                        className="wb-cover-frame"
+                        className={`wb-cover-frame${currentCover ? " has-cover" : ""}`}
                         style={{ "--book-spine": current.spineColor || "#6d4a33" } as CSSProperties}
                       >
                         <NovelCover

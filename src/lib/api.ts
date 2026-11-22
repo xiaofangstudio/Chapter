@@ -42,6 +42,7 @@ export const api = {
   countText: (text: string) => invoke<number>("count_text", { text }),
   readImportFile: (path: string) => invoke<ImportDoc>("read_import_file", { path }),
   imageData: (path: string) => invoke<string>("image_data", { path }),
+  fontData: (path: string) => invoke<string>("font_data", { path }),
   mcpStatus: () => invoke<McpStatus>("mcp_status"),
   mcpSetEnabled: (enabled: boolean, port: number) =>
     invoke<McpStatus>("mcp_set_enabled", { enabled, port }),

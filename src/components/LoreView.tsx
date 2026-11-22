@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Lore, LoreEntry, LoreKind } from "../types";
 import { LORE_KINDS } from "../types";
 import { t, tf } from "../lib/i18n";
@@ -12,49 +12,68 @@ interface Props {
   onDelete: (entry: LoreEntry) => void;
   onInsert: (entry: LoreEntry) => void;
   onSaveLore: (lore: Lore) => void;
+  initialMode?: "cards" | "graph" | "map";
 }
 
-export function LoreView({ lore, onAdd, onEdit, onDelete, onInsert, onSaveLore }: Props) {
+export function LoreView({ lore, onAdd, onEdit, onDelete, onInsert, onSaveLore, initialMode = "cards" }: Props) {
   const [kind, setKind] = useState<LoreKind>("character");
-  const [mode, setMode] = useState<"cards" | "graph">("cards");
+  const [mode, setMode] = useState<"cards" | "graph" | "map">(initialMode);
+
+  useEffect(() => {
+    setMode(initialMode);
+  }, [initialMode]);
   const entries = lore.entries.filter((e) => e.kind === kind);
   const current = LORE_KINDS.find((k) => k.key === kind)!;
 
-  if (mode === "graph") {
+  if (mode !== "cards") {
+    const mapMode = mode === "map";
     return (
       <div className="view-scroll lore-graph-view">
         <div className="view-inner">
           <div className="view-head">
             <div>
-              <h2>{t("关系图谱")}</h2>
-              <p>{t("人物、地点各成一张网；拖动、连线、标色、皇冠和立绘都只保存在这本书里。")}</p>
+              <h2>{mapMode ? t("世界观地图") : t("关系图谱")}</h2>
+              <p>
+                {mapMode
+                  ? t("上传一张世界观地图，把地点钉在上面；拖动钉子调整位置，右键删除。")
+                  : t("人物、地点各成一张网；拖动、连线、标色、皇冠和立绘都只保存在这本书里。")}
+              </p>
             </div>
-            <div className="segmini">
+            <div className="segmini lore-view-switch">
               <button onClick={() => setMode("cards")}>{t("卡片")}</button>
-              <button className="on">{t("图谱")}</button>
+              <button className={mode === "graph" ? "on" : ""} onClick={() => setMode("graph")}>
+                {t("图谱")}
+              </button>
+              <button className={mode === "map" ? "on" : ""} onClick={() => setMode("map")}>
+                {t("世界观地图")}
+              </button>
             </div>
           </div>
-          <div className="lore-tabs" style={{ marginBottom: 14 }}>
-            {LORE_KINDS.map((k) => (
-              <button
-                key={k.key}
-                className={`chip${kind === k.key ? " on" : ""}`}
-                onClick={() => setKind(k.key)}
-              >
-                {t(k.label)}
-              </button>
-            ))}
-            <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-3)" }}>
-              {tf("共 {count} 条设定", { count: lore.entries.length })}
-            </span>
-          </div>
+          {!mapMode && (
+            <div className="lore-tabs" style={{ marginBottom: 14 }}>
+              {LORE_KINDS.map((k) => (
+                <button
+                  key={k.key}
+                  className={`chip${kind === k.key ? " on" : ""}`}
+                  onClick={() => setKind(k.key)}
+                >
+                  {t(k.label)}
+                </button>
+              ))}
+              <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-3)" }}>
+                {tf("共 {count} 条设定", { count: lore.entries.length })}
+              </span>
+            </div>
+          )}
           <LoreGraph
+            key={mapMode ? "map" : `graph-${kind}`}
             lore={lore}
-            kind={kind}
+            kind={mapMode ? "place" : kind}
             onSave={onSaveLore}
             onEdit={onEdit}
-            onAdd={() => onAdd(kind)}
+            onAdd={() => onAdd(mapMode ? "place" : kind)}
             onDelete={onDelete}
+            worldOnly={mapMode}
           />
         </div>
       </div>
@@ -70,10 +89,11 @@ export function LoreView({ lore, onAdd, onEdit, onDelete, onInsert, onSaveLore }
             <p>{t("人物、地点、物品，字段随你定。写正文时按下「设定」就能把名字插进去，不怕记混。")}</p>
           </div>
           <div className="view-head-actions">
-            <button className="btn btn-ghost btn-xs" onClick={() => setMode("graph")}>
-              <Icon name="outline" size={13} />
-              {t("关系图谱")}
-            </button>
+            <div className="segmini lore-view-switch">
+              <button className="on">{t("卡片")}</button>
+              <button onClick={() => setMode("graph")}>{t("图谱")}</button>
+              <button onClick={() => setMode("map")}>{t("世界观地图")}</button>
+            </div>
             <button className="btn btn-primary" onClick={() => onAdd(kind)}>
               <Icon name="plus" size={14} />
               {t("新增")}{t(current.label)}

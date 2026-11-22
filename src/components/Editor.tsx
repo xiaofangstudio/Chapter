@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, MutableRefObject } from "react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { BookMeta, Chapter } from "../types";
 import { countWords, countWordsChunked, escapeHtml, fmtNumber, fmtTime, fmtWords, htmlToMd, mdToHtml } from "../lib/text";
 import { t, tf } from "../lib/i18n";
+import { api } from "../lib/api";
+import { recallScroll, rememberScroll } from "../lib/viewMemory";
 import { Icon } from "./Icon";
 
 interface Draft {
@@ -16,6 +19,44 @@ export interface EditorHandle {  flush: () => string;
   wordCount: () => number;
   insertText: (text: string) => void;
   focus: () => void;
+}
+
+type FontChoice = "song" | "hei" | "kai" | "fang" | "custom";
+
+const FONT_OPTIONS: { id: FontChoice; label: string; stack: string; sample: string }[] = [
+  { id: "song", label: "宋体", stack: 'var(--font-serif)', sample: "一页纸，一段故事" },
+  { id: "hei", label: "黑体", stack: 'var(--font-sans)', sample: "一页纸，一段故事" },
+  { id: "kai", label: "楷体", stack: '"KaiTi", "STKaiti", "Kaiti SC", serif', sample: "一页纸，一段故事" },
+  { id: "fang", label: "仿宋", stack: '"FangSong", "STFangsong", "FangSong_GB2312", serif', sample: "一页纸，一段故事" },
+];
+
+const CUSTOM_FONT_FAMILY = "ChapterCustomFont";
+const CUSTOM_FONT_STYLE = "chapter-custom-font-face";
+const loadedFonts = new Map<string, string>();
+
+function installCustomFont(dataUrl: string) {
+  let style = document.getElementById(CUSTOM_FONT_STYLE) as HTMLStyleElement | null;
+  if (!style) {
+    style = document.createElement("style");
+    style.id = CUSTOM_FONT_STYLE;
+    document.head.appendChild(style);
+  }
+  style.textContent = `@font-face{font-family:"${CUSTOM_FONT_FAMILY}";src:url("${dataUrl}");font-display:swap;}`;
+  void document.fonts?.load(`1em "${CUSTOM_FONT_FAMILY}"`).catch(() => {});
+}
+
+function readFontChoice(): FontChoice {
+  try {
+    const raw = localStorage.getItem("chapter.editorFontFamily");
+    if (raw === "hei" || raw === "kai" || raw === "fang" || raw === "custom") return raw;
+  } catch {
+    /* 本机存储不可用 */
+  }
+  return "song";
+}
+
+function fileStem(path: string) {
+  return path.split(/[\\/]/).pop()?.replace(/\.(ttf|otf|woff2?)$/i, "") || "自定义字体";
 }
 
 interface Props {
@@ -78,8 +119,109 @@ export function Editor({
       return 17;
     }
   });
+  const [fontChoice, setFontChoice] = useState<FontChoice>(readFontChoice);
+  const [fontOpen, setFontOpen] = useState(false);
+  const [fontErr, setFontErr] = useState("");
+  const [customName, setCustomName] = useState(() => {
+    try {
+      return localStorage.getItem("chapter.editorFontName") || "";
+    } catch {
+      return "";
+    }
+  });
+  const fontPickRef = useRef<HTMLDivElement>(null);
+
+  const choice = FONT_OPTIONS.find((f) => f.id === fontChoice);
+  const fontStack =
+    fontChoice === "custom"
+      ? `"${CUSTOM_FONT_FAMILY}", var(--font-serif)`
+      : choice?.stack || "var(--font-serif)";
+  const fontLabel = fontChoice === "custom" ? customName || t("自定义字体") : choice?.label || t("字体");
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("chapter.editorFontFamily", fontChoice);
+    } catch {
+      /* 本机存储不可用 */
+    }
+  }, [fontChoice]);
+
+  // 每个章节重挂时都复用已读出的字体，避免几十兆的字体文件被反复 encode。
+  useEffect(() => {
+    if (fontChoice !== "custom") return;
+    let cancelled = false;
+    let path = "";
+    try {
+      path = localStorage.getItem("chapter.editorFontFile") || "";
+    } catch {
+      /* 本机存储不可用 */
+    }
+    if (!path) return;
+    const cached = loadedFonts.get(path);
+    if (cached) {
+      installCustomFont(cached);
+      return;
+    }
+    void api
+      .fontData(path)
+      .then((data) => {
+        if (cancelled) return;
+        loadedFonts.set(path, data);
+        installCustomFont(data);
+        setFontErr("");
+      })
+      .catch(() => {
+        if (!cancelled) setFontErr(t("字体文件读不到了，已回退宋体"));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [fontChoice]);
+
+  useEffect(() => {
+    if (!fontOpen) return;
+    const onDown = (event: PointerEvent) => {
+      if (!fontPickRef.current?.contains(event.target as Node)) setFontOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [fontOpen]);
+
+  const pickFont = (id: FontChoice) => {
+    setFontErr("");
+    setFontChoice(id);
+    setFontOpen(false);
+  };
+
+  const uploadFont = async () => {
+    setFontErr("");
+    try {
+      const picked = await openDialog({
+        multiple: false,
+        title: t("选一个字体文件"),
+        filters: [{ name: t("字体"), extensions: ["ttf", "otf", "woff", "woff2"] }],
+      });
+      if (!picked || Array.isArray(picked)) return;
+      const data = await api.fontData(picked);
+      loadedFonts.set(picked, data);
+      installCustomFont(data);
+      const name = fileStem(picked);
+      setCustomName(name);
+      setFontChoice("custom");
+      setFontOpen(false);
+      try {
+        localStorage.setItem("chapter.editorFontFile", picked);
+        localStorage.setItem("chapter.editorFontName", name);
+      } catch {
+        /* 本机存储不可用 */
+      }
+    } catch (e) {
+      setFontErr(String(e instanceof Error ? e.message : e));
+    }
+  };
 
   const draftKey = `chapter.drafts:${bookPath}`;
+  const scrollKey = `editor:${bookPath}:${chapter.id}`;
   const [drafts, setDrafts] = useState<Draft[]>(() => {
     try {
       const raw = localStorage.getItem(draftKey);
@@ -99,6 +241,26 @@ export function Editor({
       /* 本机存储不可用时不影响正文 */
     }
   }, [drafts, draftKey]);
+
+  // 去大纲看两眼再回来，正文还停在刚才那一行。
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const saved = recallScroll(scrollKey);
+    const restore = () => {
+      if (saved > 0) el.scrollTop = Math.min(saved, Math.max(0, el.scrollHeight - el.clientHeight));
+    };
+    requestAnimationFrame(() => requestAnimationFrame(restore));
+    const lateRestore = window.setTimeout(restore, 180);
+    const onScroll = () => rememberScroll(scrollKey, el.scrollTop);
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.clearTimeout(lateRestore);
+      // 卸载时 DOM 可能已经脱离布局，scrollTop 会读成 0；
+      // 滚动事件已经实时保存过位置，这里只清理监听。
+      el.removeEventListener("scroll", onScroll);
+    };
+  }, [scrollKey]);
 
   const addDraft = () => {
     const text = draftText.trim();
@@ -323,60 +485,98 @@ export function Editor({
   return (
     <>
       <div className="editor-toolbar">
-        <button
-          className={`tbtn${fmt.bold ? " on" : ""}`}
-          title="加粗 Ctrl+B"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => run("bold")}
-        >
-          <Icon name="bold" size={16} />
-        </button>
-        <button
-          className={`tbtn${fmt.italic ? " on" : ""}`}
-          title="斜体 Ctrl+I"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => run("italic")}
-        >
-          <Icon name="italic" size={16} />
-        </button>
-        <button
-          className={`tbtn${fmt.quote ? " on" : ""}`}
-          title="引用段落"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={toggleQuote}
-        >
-          <Icon name="quote" size={16} />
-        </button>
-        <button
-          className="tbtn"
-          title="插入分隔线"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => run("insertHorizontalRule")}
-        >
-          <Icon name="hr" size={16} />
-        </button>
+        <div className="tb-group">
+          <button
+            className={`tbtn${fmt.bold ? " on" : ""}`}
+            title="加粗 Ctrl+B"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => run("bold")}
+          >
+            <Icon name="bold" size={16} />
+          </button>
+          <button
+            className={`tbtn${fmt.italic ? " on" : ""}`}
+            title="斜体 Ctrl+I"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => run("italic")}
+          >
+            <Icon name="italic" size={16} />
+          </button>
+          <button
+            className={`tbtn${fmt.quote ? " on" : ""}`}
+            title={t("引用段落")}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={toggleQuote}
+          >
+            <Icon name="quote" size={16} />
+          </button>
+          <button
+            className="tbtn"
+            title={t("插入分隔线")}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => run("insertHorizontalRule")}
+          >
+            <Icon name="hr" size={16} />
+          </button>
+        </div>
         <span className="divider-v" />
-        <button className="tbtn" title={t("插入设定引用")} onClick={onInsertLore}>
-          <Icon name="users" size={16} />
-          <span>{t("设定")}</span>
-        </button>
-        <span className="divider-v" />
-        <button
-          className={`tbtn${draftOpen ? " on" : ""}`}
-          title={t("草稿箱")}
-          onClick={() => setDraftOpen((v) => !v)}
-        >
-          <Icon name="file" size={16} />
-          <span>{t("草稿箱")}</span>
-          {drafts.length > 0 && <b className="draft-count">{drafts.length}</b>}
-        </button>
-        <button className="tbtn" title={t("撤销 Ctrl+Z")} onClick={() => run("undo")}>
-          <Icon name="undo" size={16} />
-        </button>
-        <button className="tbtn" title="重做 Ctrl+Y" onClick={() => run("redo")}>
-          <Icon name="redo" size={16} />
-        </button>
+        <div className="tb-group">
+          <button className="tbtn" title={t("插入设定引用")} onClick={onInsertLore}>
+            <Icon name="users" size={16} />
+            <span>{t("设定")}</span>
+          </button>
+          <button
+            className={`tbtn${draftOpen ? " on" : ""}`}
+            title={t("草稿箱")}
+            onClick={() => setDraftOpen((v) => !v)}
+          >
+            <Icon name="file" size={16} />
+            <span>{t("草稿箱")}</span>
+            {drafts.length > 0 && <b className="draft-count">{drafts.length}</b>}
+          </button>
+        </div>
         <span className="grow" />
+        <div className="font-picker" ref={fontPickRef}>
+          <button
+            className={`tbtn font-family-btn${fontOpen ? " on" : ""}`}
+            title={t("正文字体")}
+            onClick={() => setFontOpen((v) => !v)}
+          >
+            <Icon name="type" size={14} />
+            <span>{fontLabel}</span>
+            <Icon name="chevron" size={10} className="font-chevron" />
+          </button>
+          {fontOpen && (
+            <div className="font-pop" role="dialog" aria-label={t("正文字体")}>
+              <div className="font-pop-head">
+                <b>{t("正文字体")}</b>
+                <em>{t("只影响写作区，不改变导出排版")}</em>
+              </div>
+              {FONT_OPTIONS.map((f) => (
+                <button
+                  key={f.id}
+                  className={`font-row${fontChoice === f.id ? " on" : ""}`}
+                  onClick={() => pickFont(f.id)}
+                >
+                  <span className="font-row-name">{f.label}</span>
+                  <span className="font-row-sample" style={{ fontFamily: f.stack }}>
+                    {f.sample}
+                  </span>
+                  {fontChoice === f.id && <Icon name="check" size={13} />}
+                </button>
+              ))}
+              <div className="font-pop-sep" />
+              <button className={`font-row${fontChoice === "custom" ? " on" : ""}`} onClick={() => void uploadFont()}>
+                <span className="font-row-name">{customName || t("上传字体")}</span>
+                <span className="font-row-sample custom">
+                  {customName ? t("已载入本地字体") : t("TTF / OTF / WOFF")}
+                </span>
+                {fontChoice === "custom" ? <Icon name="check" size={13} /> : <Icon name="file" size={13} />}
+              </button>
+              {fontErr && <p className="font-err">{fontErr}</p>}
+            </div>
+          )}
+        </div>
         <span className="font-step" title={t("正文基准字号")}>
           <button
             className="tbtn font-btn"
@@ -446,6 +646,7 @@ export function Editor({
               aria-multiline="true"
               suppressContentEditableWarning
               spellCheck={false}
+              style={{ fontFamily: fontStack }}
               onInput={handleInput}
               onPaste={onPaste}
               onBlur={() => {
@@ -458,7 +659,7 @@ export function Editor({
                 }
               }}
             />
-            {empty && <div className="body-placeholder">{t("从这里开始写……")}</div>}
+            {empty && <div className="body-placeholder" style={{ fontFamily: fontStack }}>{t("从这里开始写……")}</div>}
           </div>
         </article>
       </div>
@@ -477,9 +678,7 @@ export function Editor({
           {t("目标")} <b>{goalPct}%</b>
         </span>
         <span className="grow" />
-        <span style={{ color: "var(--text-4)" }}>
-          {t("Ctrl+S 保存 · Ctrl+B 加粗 · Ctrl+I 斜体")}
-        </span>
+        <span style={{ color: "var(--text-4)" }}>Ctrl+S {t("保存")}</span>
       </footer>
 
       {draftOpen && (

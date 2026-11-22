@@ -1,11 +1,13 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { BookMeta, Chapter, Outline } from "../types";
 import { countWords, fmtWords, mdToHtml } from "../lib/text";
 import { t } from "../lib/i18n";
+import { recallScroll, rememberScroll } from "../lib/viewMemory";
 import { Icon } from "./Icon";
 import { StoryMap } from "./StoryMap";
 
 interface Props {
+  bookPath: string;
   meta: BookMeta;
   chapters: Chapter[];
   onChange: (md: string) => void;
@@ -42,12 +44,33 @@ function replaceRange(
   return { value: next, caret: start + before.length + selected.length + after.length };
 }
 
-export function BookOutline({ meta, chapters, onChange, onSave, outline, onOpenChapter }: Props) {
+export function BookOutline({ bookPath, meta, chapters, onChange, onSave, outline, onOpenChapter }: Props) {
   const value = meta.bookOutline ?? "";
   const [preview, setPreview] = useState(false);
   const [mapMode, setMapMode] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const imageRef = useRef<HTMLInputElement>(null);
+  const scrollKey = `bookoutline:${bookPath}`;
+
+  // 整书大纲通常很长，翻到一半去写正文，再回来不应该重新从头读。
+  useEffect(() => {
+    if (preview || mapMode) return;
+    const el = taRef.current;
+    if (!el) return;
+    const saved = recallScroll(scrollKey);
+    const restore = () => {
+      if (saved > 0) el.scrollTop = Math.min(saved, Math.max(0, el.scrollHeight - el.clientHeight));
+    };
+    requestAnimationFrame(restore);
+    const lateRestore = window.setTimeout(restore, 120);
+    const onScroll = () => rememberScroll(scrollKey, el.scrollTop);
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.clearTimeout(lateRestore);
+      // 与 Editor 同理：卸载时 scrollTop 不可靠，位置已由滚动事件保存。
+      el.removeEventListener("scroll", onScroll);
+    };
+  }, [preview, mapMode, scrollKey]);
 
   const insertImage = (file?: File) => {
     if (!file) return;

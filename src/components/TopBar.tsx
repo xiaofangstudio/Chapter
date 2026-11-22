@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { BookMeta, SaveState, ViewKind } from "../types";
 import { t } from "../lib/i18n";
 import { Icon } from "./Icon";
@@ -10,9 +10,11 @@ interface Props {
   coverUrl?: string;
   saveState: SaveState;
   view: ViewKind;
+  loreMode: "cards" | "graph" | "map";
   panel: boolean;
   theme: "light" | "dark";
   onView: (v: ViewKind) => void;
+  onWorldMap: () => void;
   onTogglePanel: () => void;
   onToggleTheme: () => void;
   onSettings: () => void;
@@ -33,9 +35,11 @@ export function TopBar(props: Props) {
     coverUrl,
     saveState,
     view,
+    loreMode,
     panel,
     theme,
     onView,
+    onWorldMap,
     onTogglePanel,
     onToggleTheme,
     onSettings,
@@ -52,6 +56,15 @@ export function TopBar(props: Props) {
 
   const [more, setMore] = useState<{ x: number; y: number } | null>(null);
   const [outlineMenu, setOutlineMenu] = useState<{ x: number; y: number } | null>(null);
+
+  // 切到别的视图后，挂在按钮下面的“章节/整书大纲”菜单应当收起来，
+  // 否则它会和编辑器里的字体面板、正文叠在一起，看起来像两个弹窗打架。
+  useEffect(() => {
+    // 从“大纲”进入章节/整书大纲时菜单可以继续存在；
+    // 一旦离开大纲类视图（写作/设定/世界观），就把菜单收掉。
+    if (view !== "outline" && view !== "bookOutline") setOutlineMenu(null);
+    setMore(null);
+  }, [view]);
 
   const items: MenuItem[] = [
     { label: t("设置封面…"), icon: "image", onClick: onPickCover },
@@ -118,9 +131,19 @@ export function TopBar(props: Props) {
           {t("大纲")}
           <Icon name="chevron" size={11} className="seg-caret" />
         </button>
-        <button className={`seg-btn${view === "lore" ? " on" : ""}`} onClick={() => onView("lore")}>
+        <button
+          className={`seg-btn${view === "lore" && loreMode !== "map" ? " on" : ""}`}
+          onClick={() => onView("lore")}
+        >
           <Icon name="users" size={14} />
           {t("设定")}
+        </button>
+        <button
+          className={`seg-btn${view === "lore" && loreMode === "map" ? " on" : ""}`}
+          onClick={onWorldMap}
+        >
+          <Icon name="pin" size={14} />
+          {t("世界观")}
         </button>
       </div>
 

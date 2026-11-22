@@ -46,6 +46,8 @@ export function BookObject({ book, coverUrl, className = "" }: BookObjectProps) 
     "--spine-color": spine,
     "--cover-foil": template.ink,
   } as CSSProperties;
+  // 不把 data URL 塞进 CSS 自定义属性：base64 里的分号会被样式解析截断。
+  const spineImage = custom && coverUrl ? { backgroundImage: `url("${coverUrl}")` } : undefined;
 
   return (
     <div
@@ -53,7 +55,9 @@ export function BookObject({ book, coverUrl, className = "" }: BookObjectProps) 
       style={style}
     >
       <span className="bc-shadow" aria-hidden="true" />
-      <span className="bc-spine" aria-hidden="true" />
+      <span className="bc-spine" aria-hidden="true" style={spineImage}>
+        {custom && coverUrl && <i className="bc-spine-title">{book.title}</i>}
+      </span>
       <span className="bc-pages" aria-hidden="true" />
       <div className="bc-face">
         <NovelCover
