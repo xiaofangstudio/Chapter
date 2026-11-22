@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
 import type { BookMeta, Chapter } from "../types";
-import { countWords, escapeHtml, fmtNumber, fmtTime, fmtWords, htmlToMd, mdToHtml } from "../lib/text";
+import { countWords, countWordsChunked, escapeHtml, fmtNumber, fmtTime, fmtWords, htmlToMd, mdToHtml } from "../lib/text";
 import { t, tf } from "../lib/i18n";
 import { Icon } from "./Icon";
 
 export interface EditorHandle {
   flush: () => string;
+  wordCount: () => number;
   insertText: (text: string) => void;
   focus: () => void;
 }
@@ -49,14 +50,17 @@ export function Editor({
   const syncTimer = useRef<number | undefined>(undefined);
   const autoSaveTimer = useRef<number | undefined>(undefined);
   const titleTimer = useRef<number | undefined>(undefined);
+  const recountTimer = useRef<number | undefined>(undefined);
+  const recountGeneration = useRef(0);
   const lastMd = useRef(body);
+  const lastWords = useRef(chapter.words || 0);
   const onBodyRef = useRef(onBody);
   onBodyRef.current = onBody;
 
   const [title, setTitle] = useState(chapter.title);
   const titleRef = useRef<HTMLInputElement>(null);
   const [empty, setEmpty] = useState(!body.trim());
-  const [words, setWords] = useState(chapter.words || countWords(body));
+  const [words, setWords] = useState(chapter.words || 0);
   const [fmt, setFmt] = useState({ bold: false, italic: false, quote: false });
 
   useEffect(() => {
@@ -70,8 +74,17 @@ export function Editor({
     if (!el) return;
     el.innerHTML = mdToHtml(body);
     lastMd.current = body;
+    lastWords.current = chapter.words || 0;
     setEmpty(!body.trim());
-    setWords(countWords(el.innerText));
+    if (!chapter.words && body) {
+      // 旧书没有字数缓存时，等首屏稳定后再补一次扫描，避免和章节渲染抢主线程。
+      const idle = window.requestIdleCallback ?? ((fn: IdleRequestCallback) => window.setTimeout(() => fn({} as IdleDeadline), 1600));
+      idle(() => {
+        const n = countWords(el.textContent ?? "");
+        lastWords.current = n;
+        setWords(n);
+      });
+    }
     try {
       document.execCommand("defaultParagraphSeparator", false, "p");
     } catch {
@@ -86,19 +99,20 @@ export function Editor({
     if (!el) return lastMd.current;
     const md = htmlToMd(el);
     lastMd.current = md;
+    lastWords.current = countWords(md);
     if (notify) onBodyRef.current(md);
     return md;
   };
 
-  const scheduleSync = () => {
-    window.clearTimeout(syncTimer.current);
-    syncTimer.current = window.setTimeout(() => syncNow(true), 320);
-  };
-
-  /** 停手 1.4 秒就落盘，不必等失焦或下一轮 30 秒。 */
+  /**
+   * 自动保存按章节体量自适应：百万字章节全量落盘本身就是重活，
+   * 不能每 1.4 秒做一次；小章节仍然保持原来的随手保存手感。
+   */
   const scheduleAutoSave = () => {
     window.clearTimeout(autoSaveTimer.current);
-    autoSaveTimer.current = window.setTimeout(() => onSave(), 1400);
+    const size = lastMd.current.length || chapter.words || 0;
+    const delay = size >= 600000 ? 12000 : size >= 250000 ? 8000 : size >= 80000 ? 3500 : 1400;
+    autoSaveTimer.current = window.setTimeout(() => onSave(), delay);
   };
 
   useEffect(
@@ -106,6 +120,7 @@ export function Editor({
       window.clearTimeout(syncTimer.current);
       window.clearTimeout(autoSaveTimer.current);
       window.clearTimeout(titleTimer.current);
+      window.clearTimeout(recountTimer.current);
     },
     [],
   );
@@ -116,6 +131,7 @@ export function Editor({
         window.clearTimeout(syncTimer.current);
         return syncNow(true);
       },
+      wordCount: () => lastWords.current,
       insertText: (text: string) => {
         const el = bodyRef.current;
         if (!el) return;
@@ -130,7 +146,6 @@ export function Editor({
         }
         document.execCommand("insertText", false, text);
         setEmpty(false);
-        syncNow(true);
         scheduleAutoSave();
       },
       focus: () => bodyRef.current?.focus(),
@@ -176,10 +191,28 @@ export function Editor({
   const handleInput = () => {
     const el = bodyRef.current;
     if (!el) return;
-    const text = el.innerText;
-    setEmpty(!text.trim());
-    setWords(countWords(text));
-    scheduleSync();
+    setEmpty(false);
+    // 打字时绝不做全章 innerText / 正则扫描；停手 0.8 秒后再更新字数。
+    window.clearTimeout(recountTimer.current);
+    const generation = ++recountGeneration.current;
+    const huge = lastMd.current.length > 120000 || chapter.words > 120000;
+    recountTimer.current = window.setTimeout(() => {
+      if (huge) {
+        void countWordsChunked(el).then((n) => {
+          if (generation !== recountGeneration.current) return;
+          lastWords.current = n;
+          setWords(n);
+          setEmpty(false);
+        });
+        return;
+      }
+      const text = el.textContent ?? "";
+      const n = countWords(text);
+      if (generation !== recountGeneration.current) return;
+      lastWords.current = n;
+      setWords(n);
+      setEmpty(!text.trim());
+    }, 800);
     scheduleAutoSave();
   };
 
@@ -315,7 +348,6 @@ export function Editor({
               onInput={handleInput}
               onPaste={onPaste}
               onBlur={() => {
-                syncNow(true);
                 onSave();
               }}
               onKeyDown={(e) => {

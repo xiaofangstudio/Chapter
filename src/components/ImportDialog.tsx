@@ -66,6 +66,8 @@ export function ImportDialog({ doc, mode, bookTitle, onClose, onImport }: Props)
   const [selection, setSelection] = useState("");
   const [hint, setHint] = useState("");
   const [busy, setBusy] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const closeTimer = useRef<number | undefined>(undefined);
   const areaRef = useRef<HTMLTextAreaElement>(null);
 
   const saveDraft = () => {
@@ -98,9 +100,20 @@ export function ImportDialog({ doc, mode, bookTitle, onClose, onImport }: Props)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [markers, title, author]);
 
+  useEffect(() => () => window.clearTimeout(closeTimer.current), []);
+
   const close = () => {
+    if (closing) return;
     saveDraft();
-    onClose();
+    const calm =
+      document.documentElement.dataset.motion === "off" ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (calm) {
+      onClose();
+      return;
+    }
+    setClosing(true);
+    closeTimer.current = window.setTimeout(onClose, 160);
   };
 
   const sections = useMemo(() => buildSections(doc.text, markers), [doc.text, markers]);
@@ -205,7 +218,7 @@ export function ImportDialog({ doc, mode, bookTitle, onClose, onImport }: Props)
   };
 
   return (
-    <div className="import-overlay">
+    <div className={`import-overlay${closing ? " closing" : ""}`}>
       <div className="import-shell">
         <header className="import-head">
           <div className="import-head-title">

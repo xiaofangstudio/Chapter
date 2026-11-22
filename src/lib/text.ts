@@ -2,9 +2,65 @@
 import { t } from "./i18n";
 
 export function countWords(text: string): number {
-  const cjk = text.match(/[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\u3040-\u30FF\uAC00-\uD7AF]/g);
-  const latin = text.match(/[A-Za-z0-9]+/g);
-  return (cjk ? cjk.length : 0) + (latin ? latin.length : 0);
+  // 长章节热路径：不分配 100 万个 match 结果数组，逐码点扫描。
+  let count = 0;
+  let inLatin = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text.charCodeAt(i);
+    const isCjk =
+      (c >= 0x3400 && c <= 0x4dbf) ||
+      (c >= 0x4e00 && c <= 0x9fff) ||
+      (c >= 0xf900 && c <= 0xfaff) ||
+      (c >= 0x3040 && c <= 0x30ff) ||
+      (c >= 0xac00 && c <= 0xd7af);
+    const isLatin =
+      (c >= 48 && c <= 57) ||
+      (c >= 65 && c <= 90) ||
+      (c >= 97 && c <= 122);
+    if (isCjk) {
+      count += 1;
+      inLatin = false;
+    } else if (isLatin) {
+      if (!inLatin) count += 1;
+      inLatin = true;
+    } else {
+      inLatin = false;
+    }
+  }
+  return count;
+}
+
+/**
+ * 超长章节的分片字数统计：按块取 textContent，每 6ms 让出一次主线程。
+ * 既避免一次 60ms 长任务，也避免 content-visibility 导致 innerText 只返回视口内文字。
+ */
+export async function countWordsChunked(root: HTMLElement): Promise<number> {
+  let total = 0;
+  let last = performance.now();
+  const yieldIfNeeded = async () => {
+    if (performance.now() - last > 6) {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      last = performance.now();
+    }
+  };
+  for (const node of editorBlocks(root)) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      total += countWords(node.textContent ?? "");
+      continue;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) continue;
+    const text = (node as HTMLElement).textContent ?? "";
+    if (text.length > 24000) {
+      for (let i = 0; i < text.length; i += 24000) {
+        total += countWords(text.slice(i, i + 24000));
+        await yieldIfNeeded();
+      }
+    } else {
+      total += countWords(text);
+    }
+    await yieldIfNeeded();
+  }
+  return total;
 }
 
 export function escapeHtml(s: string): string {
@@ -25,6 +81,36 @@ function inline(s: string): string {
 /** 受限 Markdown → 编辑器 HTML（只支持正文会用到的几种语法）。 */
 export function mdToHtml(md: string): string {
   if (!md.trim()) return "<p><br></p>";
+  const html = mdToHtmlRaw(md);
+  // 百万字章节若把 15,000 个段落直接铺在 contenteditable 里，每次输入
+  // 浏览器都会为整章重排，出现 60ms 级长任务。按 50 段分块后，
+  // content-visibility 只需维护约 300 个块，输入时不再整章重排。
+  if (html.length < 150000) return html;
+  return groupBlocks(html);
+}
+
+function groupBlocks(html: string): string {
+  const tmp = document.createElement("div");
+  tmp.innerHTML = html;
+  const blocks: Node[] = [];
+  for (const node of Array.from(tmp.childNodes)) {
+    if (node.nodeType === Node.TEXT_NODE && !(node.textContent ?? "").trim()) continue;
+    blocks.push(node);
+  }
+  if (blocks.length <= 60) return html;
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < blocks.length; i += 50) {
+    const chunk = document.createElement("div");
+    chunk.className = "cv-chunk";
+    for (const node of blocks.slice(i, i + 50)) chunk.appendChild(node);
+    frag.appendChild(chunk);
+  }
+  tmp.textContent = "";
+  tmp.appendChild(frag);
+  return tmp.innerHTML;
+}
+
+function mdToHtmlRaw(md: string): string {
   const lines = md.replace(/\r\n/g, "\n").split("\n");
   const out: string[] = [];
   let para: string[] = [];
@@ -125,10 +211,51 @@ function blockToMd(el: Element): string {
   return Array.from(el.childNodes).map(inlineToMd).join("").trim();
 }
 
+function editorBlocks(root: HTMLElement): Node[] {
+  const list: Node[] = [];
+  const walk = (parent: HTMLElement) => {
+    for (const node of Array.from(parent.childNodes)) {
+      if (
+        node.nodeType === Node.ELEMENT_NODE &&
+        (node as HTMLElement).classList?.contains("cv-chunk")
+      ) {
+        walk(node as HTMLElement);
+      } else {
+        list.push(node);
+      }
+    }
+  };
+  walk(root);
+  return list;
+}
+
 /** 编辑器 HTML → 受限 Markdown（存盘与导出的正文格式）。 */
 export function htmlToMd(root: HTMLElement): string {
+  // 纯文字长章节：逐块取 textContent，不递归内联节点。
+  // 注意不能把 innerText 当快捷路径——content-visibility:auto 会跳过视口外段落，
+  // 那样保存会把长章“截断”成当前屏幕附近的内容。
+  const plainBlocks = editorBlocks(root);
+  const rich = root.querySelector(
+    "strong,b,em,i,blockquote,h1,h2,h3,h4,h5,h6,ul,ol,hr,br",
+  );
+  if (!rich) {
+    const plain: string[] = [];
+    for (const node of plainBlocks) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const text = (node.textContent ?? "").trim();
+        if (text) plain.push(text);
+        continue;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      const el = node as Element;
+      if (el.tagName === "BR") continue;
+      const text = (el.textContent ?? "").replace(/\u00a0/g, " ").trim();
+      if (text) plain.push(text);
+    }
+    return plain.join("\n\n").replace(/\u00a0/g, " ");
+  }
   const blocks: string[] = [];
-  Array.from(root.childNodes).forEach((node) => {
+  plainBlocks.forEach((node) => {
     if (node.nodeType === Node.TEXT_NODE) {
       const t = (node.textContent ?? "").trim();
       if (t) blocks.push(t);

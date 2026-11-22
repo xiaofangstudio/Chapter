@@ -5,6 +5,11 @@ import { NOTES_PACKS } from "./i18n-notes";
 import { STATS_PACKS } from "./i18n-stats";
 import { MORE_PACKS } from "./i18n-more";
 import { WORLD_PACKS } from "./i18n-world";
+import { WORLD_HOME_PACKS } from "./i18n-world-home";
+import { WORLD_HOME_EXTRA } from "./i18n-world-home-extra";
+import { WORLD_STATS_PACKS } from "./i18n-world-stats";
+import { WORLD_RELATIVE_PACKS } from "./i18n-world-relative";
+import { ZH_HANT } from "./i18n-zh-hant";
 
 type Pack = Record<string, string>;
 
@@ -195,6 +200,16 @@ const en: Pack = {
   "一段话讲清这个故事，读者先看到这里。": "One paragraph that sums up the story — readers see it first.",
   "简介只用于介绍页，不会进入正文。": "The synopsis appears only on the overview, never in the manuscript.",
   "书籍设置…": "Book settings…",
+  "百宝箱": "Treasure chest",
+  "小方工作室的抽屉。里面只有一件东西，而且千万别点。": "Xiaofang Studio's drawer. It holds exactly one thing — and whatever you do, don't click it.",
+  "千万别点": "Do not click",
+  "你点了。": "You clicked it.",
+  "小方正在抖屁股。50% 的概率，会发生一些事。": "Xiaofang is shaking it. There is a 50% chance that something happens.",
+  "这次没跳。": "No jump this time.",
+  "这次算你走运。小方还在抖。": "Lucky you. Xiaofang keeps shaking.",
+  "再点一次": "Click again",
+  "跳转中…": "Leaving…",
+  "关掉": "Close",
 };
 
 const ja: Pack = {
@@ -1006,7 +1021,7 @@ const ar: Pack = {
 };
 
 const BASE_PACKS = { en, ja, ko, fr, de, es, pt, ru, ar } as const;
-const ALL_BASE: Record<string, Pack> = { ...BASE_PACKS, ...MORE_PACKS, ...WORLD_PACKS };
+const ALL_BASE: Record<string, Pack> = { ...BASE_PACKS, ...MORE_PACKS, ...WORLD_PACKS, ...WORLD_HOME_PACKS, ...WORLD_HOME_EXTRA, ...WORLD_STATS_PACKS, ...WORLD_RELATIVE_PACKS, zhTW: ZH_HANT };
 
 /** 初始只带人工校对与内置词典；自动翻译包在真正使用非中文时再加载。 */
 const packs = {} as Record<Exclude<UiLanguage, "zh">, Pack>;
@@ -1022,6 +1037,11 @@ function rebuildPacks(auto: Record<string, Pack> = {}, extra: Record<string, Pac
       ...(STATS_PACKS[lang] ?? {}),
       ...(MORE_PACKS[lang] ?? {}),
       ...(WORLD_PACKS[lang] ?? {}),
+      ...(WORLD_HOME_PACKS[lang] ?? {}),
+      ...(WORLD_HOME_EXTRA[lang] ?? {}),
+      ...(WORLD_STATS_PACKS[lang] ?? {}),
+      ...(WORLD_RELATIVE_PACKS[lang] ?? {}),
+      ...(lang === "zhTW" ? ZH_HANT : {}),
       ...(BASE_PACKS[lang as keyof typeof BASE_PACKS] ?? {}),
     };
   });
@@ -1031,7 +1051,7 @@ rebuildPacks();
 let autoLoaded = false;
 /** 首次切到非中文时懒加载大词典；之后所有语言共用同一份已加载结果。 */
 export async function ensureUiPack(lang: UiLanguage): Promise<void> {
-  if (lang === "zh" || autoLoaded) return;
+  if (lang === "zh" || lang === "zhTW" || autoLoaded) return;
   const [autoMod, extraMod] = await Promise.all([import("./i18n-auto"), import("./i18n-extra")]);
   rebuildPacks(autoMod.AUTO_PACKS as Record<string, Pack>, extraMod.EXTRA_PACKS as Record<string, Pack>);
   autoLoaded = true;

@@ -590,7 +590,7 @@ textarea.input {
   background:
     radial-gradient(120% 90% at 15% 100%, var(--sun-a) 0%, transparent 55%),
     var(--bg);
-  transition: opacity 420ms var(--ease-out);
+  transition: opacity 320ms var(--ease-out);
 }
 
 .splash.leaving {
@@ -1701,6 +1701,12 @@ textarea.input {
   contain-intrinsic-size: auto 4.12em;
 }
 
+/* 百万字长章按 50 段分块；块级可见性避免每次输入重排整章。 */
+.body .cv-chunk {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 250em;
+}
+
 .body p {
   margin: 0 0 0.9em;
   text-indent: 2em;
@@ -2253,6 +2259,14 @@ textarea.input {
   animation: modalIn 180ms var(--ease-out) both;
 }
 
+html[data-modal-closing="1"] .backdrop {
+  pointer-events: none;
+  animation: modalBackdropOut 160ms ease-in both;
+}
+html[data-modal-closing="1"] .backdrop .modal {
+  animation: modalBoxOut 160ms ease-in both;
+}
+
 .modal.glass {
   background: color-mix(in srgb, var(--surface) 94%, transparent);
   backdrop-filter: blur(14px) saturate(1.12);
@@ -2268,7 +2282,9 @@ textarea.input {
   max-height: calc(100vh - 32px);
   max-height: calc(100dvh - 32px);
   overflow: hidden;
-  background: color-mix(in srgb, var(--surface) 97%, transparent);
+  background: color-mix(in srgb, var(--surface) 98.5%, transparent);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .modal-head {
@@ -2462,6 +2478,14 @@ textarea.input {
 
 @keyframes modalIn {
   from { opacity: 0; }
+}
+
+@keyframes modalBackdropOut {
+  to { opacity: 0; }
+}
+
+@keyframes modalBoxOut {
+  to { opacity: 0; transform: translate3d(0, 7px, 0) scale(0.99); }
 }
 
 /* 弹窗里的分组卡 */
@@ -2888,11 +2912,21 @@ textarea.input {
   background: var(--danger);
   color: #fff;
 }
+.toast.leaving {
+  pointer-events: none;
+  animation: toastOut 180ms var(--ease-out) both;
+}
 
 @keyframes toastIn {
   from {
     opacity: 0;
     transform: translateY(8px);
+  }
+}
+@keyframes toastOut {
+  to {
+    opacity: 0;
+    transform: translateY(-4px);
   }
 }
 
@@ -4298,6 +4332,13 @@ html[data-bg="image"] .welcome {
   background: rgba(31, 22, 15, 0.42);
   backdrop-filter: blur(10px) saturate(1.05);
   animation: fadeIn 180ms var(--ease-out) both;
+}
+.import-overlay.closing {
+  pointer-events: none;
+  animation: modalBackdropOut 160ms ease-in both;
+}
+.import-overlay.closing .import-shell {
+  animation: modalBoxOut 160ms ease-in both;
 }
 
 .import-shell {
@@ -6136,14 +6177,14 @@ html[data-bg="image"] .welcome {
     gap: 10px;
   }
   .workspace-home .wb-calendar {
-    padding: 9px 13px 10px;
+    padding: 9px 13px 6px;
   }
   .workspace-home .wb-calendar .cal-foot {
     margin-top: 6px;
     padding-top: 4px;
   }
   .workspace-home .wb-today {
-    padding: 9px 13px 8px;
+    padding: 9px 13px 6px;
   }
   .workspace-home .wb-today .week-bars {
     display: none;
@@ -6171,6 +6212,12 @@ html[data-bg="image"] .welcome {
   .wb-today-main .habit-ring {
     width: 52px;
     height: 52px;
+  }
+  .wb-today-main .habit-ring::after {
+    inset: 6px;
+  }
+  .wb-today-main .habit-ring span {
+    font-size: 15px;
   }
   .wb-calendar {
     padding: 9px 13px 7px;
@@ -6205,6 +6252,7 @@ html[data-bg="image"] .welcome {
   }
   .wb-today-main {
     gap: 10px;
+    margin: 2px 0 2px;
   }
   .wb-today-text b {
     font-size: 21px;
@@ -6666,6 +6714,7 @@ html[data-bg="image"] .welcome {
   align-items: center;
   max-height: 76%;
   overflow: hidden;
+  line-height: 1.04;
 }
 
 .novel-cover-title.cjk span {
@@ -7232,15 +7281,13 @@ html[data-bg="image"] .welcome {
   pointer-events: none;
   opacity: 0.52;
   background:
-    radial-gradient(circle, rgba(255, 246, 214, 0.16) 0%, rgba(255, 232, 178, 0.07) 32%, rgba(255, 226, 166, 0) 68%);
-  mix-blend-mode: soft-light;
+    radial-gradient(circle, rgba(255, 246, 214, 0.11) 0%, rgba(255, 232, 178, 0.045) 32%, rgba(255, 226, 166, 0) 68%);
   transition: opacity 300ms var(--ease-out);
   will-change: transform;
 }
 [data-theme="dark"] .cursor-aura {
   background:
-    radial-gradient(circle, rgba(255, 214, 150, 0.14) 0%, rgba(255, 196, 120, 0.055) 34%, rgba(255, 190, 110, 0) 68%);
-  mix-blend-mode: screen;
+    radial-gradient(circle, rgba(255, 214, 150, 0.1) 0%, rgba(255, 196, 120, 0.04) 34%, rgba(255, 190, 110, 0) 68%);
 }
 
 .near-aura {
@@ -7252,27 +7299,25 @@ html[data-bg="image"] .welcome {
   opacity: var(--near, 0);
   background: radial-gradient(
     150px circle at var(--gx, 50%) var(--gy, 50%),
-    rgba(255, 244, 211, 0.2),
-    rgba(255, 232, 178, 0.08) 38%,
+    rgba(255, 244, 211, 0.12),
+    rgba(255, 232, 178, 0.045) 38%,
     transparent 66%
   );
   box-shadow:
-    inset 0 0 0 1px rgba(255, 233, 190, 0.3),
-    inset 0 0 20px rgba(255, 226, 166, 0.1);
-  mix-blend-mode: soft-light;
+    inset 0 0 0 1px rgba(255, 233, 190, 0.22),
+    inset 0 0 20px rgba(255, 226, 166, 0.06);
   transition: opacity 120ms linear;
 }
 [data-theme="dark"] .near-aura {
   background: radial-gradient(
     150px circle at var(--gx, 50%) var(--gy, 50%),
-    rgba(255, 206, 140, 0.16),
-    rgba(255, 188, 112, 0.06) 40%,
+    rgba(255, 206, 140, 0.11),
+    rgba(255, 188, 112, 0.04) 40%,
     transparent 66%
   );
   box-shadow:
-    inset 0 0 0 1px rgba(255, 205, 140, 0.26),
-    inset 0 0 22px rgba(255, 190, 120, 0.08);
-  mix-blend-mode: screen;
+    inset 0 0 0 1px rgba(255, 205, 140, 0.2),
+    inset 0 0 22px rgba(255, 190, 120, 0.05);
 }
 [data-motion="off"] .cursor-aura,
 [data-motion="off"] .near-aura {
@@ -7295,6 +7340,19 @@ html[data-bg="image"] .welcome {
     radial-gradient(80% 70% at 50% 30%, rgba(40, 24, 10, 0.18), rgba(20, 10, 4, 0.42)),
     rgba(20, 12, 6, 0.28);
   animation: fadeIn 160ms var(--ease-out) both;
+}
+.settings-overlay.closing {
+  pointer-events: none;
+  animation: settingsOverlayOut 220ms ease-in both;
+}
+.settings-overlay.closing .settings-shell {
+  animation: settingsShellOut 220ms ease-in both;
+}
+@keyframes settingsOverlayOut {
+  to { opacity: 0; }
+}
+@keyframes settingsShellOut {
+  to { opacity: 0; transform: translate3d(0, 8px, 0) scale(0.988); }
 }
 
 /* 设置打开时暂停背景动画，磨砂卡片不再每帧重新采样整屏背景。 */
@@ -8554,68 +8612,79 @@ body.stage-live .near-aura {
   overflow: hidden;
 }
 
-/* 侧边栏切页：整页位移 + 渐隐，新旧两层交叉 280ms。 */
+/* 侧边栏切页：旧页留在 DOM 里完成离场，新页同时入场；不克隆、不拍快照。 */
+.wb-view-stack {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 .wb-view-frame {
+  position: relative;
+  z-index: 2;
   flex: 1;
   min-height: 0;
   width: 100%;
   display: flex;
   flex-direction: column;
 }
+.wb-view-frame.is-leaving {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
 .wb-view-frame > .workbench,
 .wb-view-frame > .wb-pane {
   flex: 1;
   min-height: 0;
 }
-.wb-view-frame.wb-view-in-up {
-  animation: wbViewInUp 240ms var(--ease-out) both;
+.wb-view-frame.enter-up {
+  animation: wbViewInUp 200ms var(--ease-out) backwards;
 }
-.wb-view-frame.wb-view-in-down {
-  animation: wbViewInDown 240ms var(--ease-out) both;
+.wb-view-frame.enter-down {
+  animation: wbViewInDown 200ms var(--ease-out) backwards;
 }
-.wb-view-ghost {
-  position: fixed !important;
-  z-index: 90;
-  margin: 0 !important;
-  pointer-events: none;
-  box-sizing: border-box;
-  will-change: transform, opacity;
+.wb-view-frame.is-leaving.leave-up {
+  animation: wbViewOutUp 160ms var(--ease-out) both;
 }
-/* 离场克隆只承担一次淡出，不再重复采样任何背景模糊。 */
-.wb-view-ghost,
-.wb-view-ghost * {
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-}
-.wb-view-ghost.wb-view-out-up {
-  animation: wbViewOutUp 220ms var(--ease-out) both;
-}
-.wb-view-ghost.wb-view-out-down {
-  animation: wbViewOutDown 220ms var(--ease-out) both;
+.wb-view-frame.is-leaving.leave-down {
+  animation: wbViewOutDown 160ms var(--ease-out) both;
 }
 @keyframes wbViewInUp {
-  from { opacity: 0; transform: translate3d(0, 12px, 0); }
+  from { opacity: 0; transform: translate3d(0, 10px, 0); }
   to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
 @keyframes wbViewInDown {
-  from { opacity: 0; transform: translate3d(0, -12px, 0); }
+  from { opacity: 0; transform: translate3d(0, -10px, 0); }
   to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
 @keyframes wbViewOutUp {
   from { opacity: 1; transform: translate3d(0, 0, 0); }
-  to { opacity: 0; transform: translate3d(0, -10px, 0); }
+  to { opacity: 0; transform: translate3d(0, -7px, 0); }
 }
 @keyframes wbViewOutDown {
   from { opacity: 1; transform: translate3d(0, 0, 0); }
-  to { opacity: 0; transform: translate3d(0, 10px, 0); }
+  to { opacity: 0; transform: translate3d(0, 7px, 0); }
+}
+[data-motion="reduced"] .wb-view-frame.enter-up,
+[data-motion="reduced"] .wb-view-frame.enter-down {
+  animation-duration: 140ms;
+}
+[data-motion="reduced"] .wb-view-frame.is-leaving.leave-up,
+[data-motion="reduced"] .wb-view-frame.is-leaving.leave-down {
+  animation-duration: 110ms;
 }
 [data-motion="off"] .wb-view-frame,
-[data-motion="off"] .wb-view-ghost {
+[data-motion="off"] .wb-view-frame.is-leaving {
   animation: none !important;
 }
 @media (prefers-reduced-motion: reduce) {
   .wb-view-frame,
-  .wb-view-ghost {
+  .wb-view-frame.is-leaving {
     animation: none !important;
   }
 }
@@ -8674,7 +8743,7 @@ body.stage-live .near-aura {
 }
 
 .workspace-home .wb-book-card {
-  padding: 18px 30px 20px;
+  padding: 18px 30px 16px;
 }
 
 /* 工作台的四张大卡片不做整卡 hover 重绘：只保留封面抬升（合成层动画），避免鼠标划过时掉帧。 */
@@ -8986,6 +9055,17 @@ body.stage-live .near-aura {
   font-size: 7px;
   color: var(--text-4);
   white-space: nowrap;
+}
+/* 首尾日期的字数标签向图内收，避免贴到卡片边缘被裁掉。 */
+.wb-chart-col:first-child em,
+.wb-chart-col:first-child span {
+  left: 0;
+  right: auto;
+}
+.wb-chart-col:last-child em,
+.wb-chart-col:last-child span {
+  right: 0;
+  left: auto;
 }
 
 .wb-rank-list { margin-top: 12px; display: flex; flex-direction: column; gap: 2px; }
@@ -9505,4 +9585,308 @@ body.stage-live .near-aura {
   .cover-picker-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); max-height: 310px; }
   .cover-picker-custom { flex-direction: column; align-items: flex-start; }
   .cover-picker-spine { align-items: flex-start; flex-direction: column; }
+}
+
+/* ══════════════════════════════════════════════════════════
+   1.3.4 · 百宝箱：抽屉里只有一件东西，而且千万别点
+   ══════════════════════════════════════════════════════════ */
+
+.treasure-card {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid rgba(120, 84, 46, 0.18);
+  border-radius: 14px;
+  background:
+    radial-gradient(90% 120% at 0% 0%, rgba(255, 255, 255, 0.65), transparent 60%),
+    linear-gradient(135deg, rgba(246, 236, 222, 0.9), rgba(238, 223, 203, 0.72));
+}
+.treasure-card-mark {
+  width: 38px;
+  height: 34px;
+  flex: 0 0 38px;
+  border-radius: 9px 9px 7px 7px;
+  border: 1px solid rgba(120, 84, 46, 0.22);
+  background: linear-gradient(180deg, #d7ad78, #b88245);
+  position: relative;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 3px 8px rgba(90, 56, 20, 0.12);
+}
+.treasure-card-mark::before {
+  content: "";
+  position: absolute;
+  inset: 7px 5px auto;
+  height: 7px;
+  border-radius: 3px;
+  background: rgba(255, 249, 238, 0.62);
+  border: 1px solid rgba(92, 58, 24, 0.22);
+}
+.treasure-card-mark span {
+  position: absolute;
+  left: 50%;
+  top: 13px;
+  width: 9px;
+  height: 11px;
+  margin-left: -4.5px;
+  border-radius: 3px;
+  background: #f4d79d;
+  box-shadow: inset 0 0 0 1px rgba(104, 64, 22, 0.3);
+}
+.treasure-card-mark i {
+  position: absolute;
+  left: 50%;
+  bottom: 5px;
+  width: 5px;
+  height: 5px;
+  margin-left: -2.5px;
+  border-radius: 50%;
+  background: #40280f;
+}
+.treasure-card-copy {
+  flex: 1;
+  min-width: 0;
+}
+.treasure-card-copy b {
+  display: block;
+  font-family: var(--font-serif);
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.treasure-card-copy span {
+  display: block;
+  margin-top: 3px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-4);
+}
+.treasure-card-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid rgba(176, 57, 38, 0.42);
+  border-radius: 999px;
+  background: rgba(176, 57, 38, 0.08);
+  color: #a73725;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+.treasure-card-btn:hover {
+  background: rgba(176, 57, 38, 0.14);
+  border-color: rgba(176, 57, 38, 0.65);
+}
+
+.treasure-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(70% 60% at 50% 42%, rgba(42, 28, 14, 0.1), rgba(16, 10, 5, 0.66)),
+    rgba(20, 13, 7, 0.42);
+  animation: fadeIn 140ms ease-out both;
+}
+.treasure-modal {
+  position: relative;
+  width: min(440px, calc(100vw - 36px));
+  padding: 28px 28px 16px;
+  border: 1px solid rgba(120, 84, 46, 0.26);
+  border-radius: 20px;
+  background:
+    radial-gradient(90% 70% at 50% 0%, rgba(255, 255, 255, 0.8), transparent 65%),
+    #fbf5eb;
+  box-shadow: 0 30px 80px rgba(28, 16, 6, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  text-align: center;
+  animation: treasureIn 200ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.treasure-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.treasure-close:hover { background: rgba(120, 84, 46, 0.08); }
+.treasure-kicker {
+  display: block;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: #ae8d65;
+}
+.treasure-title {
+  margin: 6px 0 0;
+  font-family: var(--font-serif);
+  font-size: 27px;
+  line-height: 1.3;
+  font-weight: 600;
+  color: var(--ink);
+}
+.treasure-copy {
+  min-height: 32px;
+  margin: 6px auto 0;
+  max-width: 320px;
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.xf-stage {
+  position: relative;
+  width: 220px;
+  height: 160px;
+  margin: 6px auto 0;
+}
+.xf-gif {
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  width: 160px;
+  height: 160px;
+  margin-left: -80px;
+  object-fit: contain;
+  mix-blend-mode: multiply;
+  user-select: none;
+  pointer-events: none;
+}
+.xf-body {
+  position: absolute;
+  left: 50%;
+  top: 28px;
+  width: 84px;
+  height: 78px;
+  margin-left: -42px;
+  border-radius: 18px 18px 14px 14px;
+  background: linear-gradient(180deg, #79e2f7 0%, #31c3e7 48%, #12a7cf 100%);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -6px 0 rgba(0, 123, 158, 0.16),
+    0 8px 18px rgba(12, 102, 128, 0.2);
+  transform-origin: 50% 88%;
+}
+.xf-eye {
+  position: absolute;
+  top: 25px;
+  width: 6px;
+  height: 17px;
+  border-radius: 6px;
+  background: #101820;
+}
+.xf-eye.e1 { left: 27px; transform: rotate(-4deg); }
+.xf-eye.e2 { right: 27px; transform: rotate(4deg); }
+.xf-butt {
+  position: absolute;
+  right: 34px;
+  bottom: 26px;
+  width: 34px;
+  height: 22px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #1fb9dd, #0a8fb5);
+  opacity: 0;
+  transform-origin: 30% 50%;
+}
+.xf-floor {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  width: 120px;
+  height: 16px;
+  margin-left: -60px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(90, 58, 26, 0.22), transparent 70%);
+}
+.xf-spark {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #e2a33e;
+  opacity: 0;
+}
+.xf-spark.s1 { left: 34px; top: 48px; }
+.xf-spark.s2 { right: 30px; top: 34px; }
+.xf-spark.s3 { right: 46px; bottom: 34px; }
+
+.xf-stage.shaking .xf-body {
+  animation: xfShake 180ms steps(2, end) infinite;
+}
+.xf-stage.shaking .xf-butt {
+  opacity: 1;
+  animation: xfButt 180ms steps(2, end) infinite;
+}
+.xf-stage.shaking .xf-spark {
+  animation: xfSpark 620ms ease-out infinite;
+}
+.xf-stage.shaking .xf-spark.s2 { animation-delay: 180ms; }
+.xf-stage.shaking .xf-spark.s3 { animation-delay: 320ms; }
+
+@keyframes xfShake {
+  0% { transform: translate3d(-8px, 0, 0) rotate(-5deg); }
+  50% { transform: translate3d(8px, -2px, 0) rotate(5deg); }
+  100% { transform: translate3d(-8px, 0, 0) rotate(-5deg); }
+}
+@keyframes xfButt {
+  0% { transform: scale(1) translate(0, 0); }
+  50% { transform: scale(1.09) translate(5px, -3px); }
+  100% { transform: scale(1) translate(0, 0); }
+}
+@keyframes xfSpark {
+  0% { opacity: 0; transform: translateY(4px) scale(0.6); }
+  30% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-14px) scale(1.1); }
+}
+@keyframes treasureIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.treasure-actions {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 9px;
+  margin-top: 4px;
+}
+.treasure-danger {
+  height: 36px;
+  padding: 0 22px;
+  border: 1px solid #a93b29;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #bf4b36, #9f3222);
+  color: #fff8ef;
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  box-shadow: 0 6px 14px rgba(150, 45, 28, 0.24);
+}
+.treasure-danger:hover { filter: brightness(1.06); }
+.treasure-foot {
+  margin: 12px 0 0;
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 8.5px;
+  letter-spacing: 0.18em;
+  color: #b89a72;
+}
+[data-motion="off"] .xf-body,
+[data-motion="off"] .xf-butt,
+[data-motion="off"] .xf-spark,
+[data-motion="off"] .treasure-modal { animation: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .xf-body, .xf-butt, .xf-spark, .treasure-modal { animation: none !important; }
 }

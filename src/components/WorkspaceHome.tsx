@@ -129,6 +129,9 @@ export function WorkspaceHome({
     [locale],
   );
   const [pane, setPane] = useState<WbPane>(readPane);
+  const [leaving, setLeaving] = useState<WbPane | null>(null);
+  const [leaveDir, setLeaveDir] = useState<"up" | "down">("up");
+  const leaveTimer = useRef<number | undefined>(undefined);
   const [cursor, setCursor] = useState({ y: now.getFullYear(), m: now.getMonth() });
   const [clock, setClock] = useState(new Date());
   const [welcome, setWelcome] = useState(pickWelcome);
@@ -138,7 +141,6 @@ export function WorkspaceHome({
   const [query, setQuery] = useState("");
   const [notes, setNotes] = useState<Note[]>(readNotes);
   const [draft, setDraft] = useState("");
-  const [paneDir, setPaneDir] = useState<1 | -1>(1);
   const bookCoverRef = useRef<HTMLDivElement | null>(null);
   const mainRef = useRef<HTMLDivElement | null>(null);
 
@@ -154,6 +156,8 @@ export function WorkspaceHome({
   useEffect(() => {
     writeStorage(PANE_KEY, pane);
   }, [pane]);
+
+  useEffect(() => () => window.clearTimeout(leaveTimer.current), []);
 
   useEffect(() => {
     writeStorage(NOTES_KEY, JSON.stringify(notes));
@@ -281,130 +285,30 @@ export function WorkspaceHome({
   ];
 
   /**
-   * 切换工作台页面：旧页面按方向位移淡出，新页面从相反方向位移淡入。
-   * 克隆一层旧页面做 280ms 的离场，避免先卸载后挂载造成闪白或瞬间跳变。
+   * 切换工作台页面：旧页继续留在 DOM 里完成 160ms 离场，新页同时入场。
+   * 不克隆整页、不拍浏览器快照，旧页本身就是已经渲染好的节点，切页不再有空白帧。
    */
   const switchPane = (next: WbPane) => {
     if (next === pane) return;
     const order: WbPane[] = ["home", "shelf", "stats", "notes"];
-    const dir: 1 | -1 = order.indexOf(next) > order.indexOf(pane) ? 1 : -1;
-    const motion = document.documentElement.dataset.motion;
-    const calm = motion === "off" || motion === "reduced" || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const root = mainRef.current;
-    const view = root?.querySelector<HTMLElement>(".workbench, .wb-pane");
-    if (view && !calm) {
-      document.querySelectorAll(".wb-view-ghost").forEach((el) => el.remove());
-      const rect = view.getBoundingClientRect();
-      const ghost = view.cloneNode(true) as HTMLElement;
-      ghost.classList.add("wb-view-ghost", dir > 0 ? "wb-view-out-up" : "wb-view-out-down");
-      ghost.setAttribute("aria-hidden", "true");
-      ghost.style.left = `${rect.left}px`;
-      ghost.style.top = `${rect.top}px`;
-      ghost.style.width = `${rect.width}px`;
-      ghost.style.height = `${rect.height}px`;
-      document.body.appendChild(ghost);
-      ghost.scrollTop = view.scrollTop;
-      const drop = () => ghost.remove();
-      ghost.addEventListener("animationend", drop, { once: true });
-      window.setTimeout(drop, 260);
+    const dir: "up" | "down" = order.indexOf(next) > order.indexOf(pane) ? "up" : "down";
+    const calm =
+      document.documentElement.dataset.motion === "off" ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    window.clearTimeout(leaveTimer.current);
+    if (calm) {
+      setLeaving(null);
+      setPane(next);
+      return;
     }
-    setPaneDir(dir);
+    setLeaveDir(dir);
+    setLeaving(pane);
     setPane(next);
+    leaveTimer.current = window.setTimeout(() => setLeaving(null), 165);
   };
 
-  return (
-    <div className={`welcome workspace-home${stageOpen ? " stage-open" : ""}`}>
-      <aside className="wb-rail" aria-label={t("工作台导航")}>
-        <div className="wb-rail-brand">
-          <Logo size={25} className="logo" />
-          <div className="wb-rail-brand-text">
-            <b>Chapter</b>
-            <em>{t("小方工作室 · 小说写作")}</em>
-          </div>
-        </div>
-        <div className="wb-rail-seal">
-          <span>CHAPTER</span>
-          <i />
-          <span>{t("小说 · 写作 · 归档")}</span>
-        </div>
-
-        <nav className="wb-rail-nav">
-          {railItems.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              className={`wb-rail-item${pane === item.key ? " on" : ""}`}
-              aria-current={pane === item.key ? "page" : undefined}
-              onClick={() => switchPane(item.key)}
-              title={t(item.label)}
-            >
-              <Icon name={item.icon} size={16} />
-              <span className="wb-rail-label">{t(item.label)}</span>
-              {item.key === "notes" && notes.length > 0 && (
-                <em className="wb-rail-count">{notes.length}</em>
-              )}
-            </button>
-          ))}
-          <button type="button" className="wb-rail-item" onClick={onSettings} title={t("偏好设置")}>
-            <Icon name="settings" size={16} />
-            <span className="wb-rail-label">{t("偏好设置")}</span>
-          </button>
-        </nav>
-
-        <div className="wb-rail-spacer" />
-
-        <div className="wb-rail-quote">
-          <span className="wb-rail-quote-mark">“</span>
-          <p>{t(welcome)}</p>
-          <em>{t("今天想写点什么")}</em>
-        </div>
-
-        <div className="wb-rail-today">
-          <div className="wb-rail-today-head">
-            <span>{t("今天")}</span>
-            <b>
-              {fmtWords(todayWords)} <em>/ {fmtWords(goal)}</em>
-            </b>
-          </div>
-          <div className="wb-rail-progress">
-            <i style={{ width: `${pct}%` }} />
-          </div>
-          <p>
-            {t("连续写作")} <b>{streak}</b> {t("天")} · Chapter {t("陪你")} {days} {t("天")}
-          </p>
-        </div>
-
-        <button className="wb-rail-minimal" onClick={onMinimal}>
-          <Icon name="book" size={14} />
-          <span>{t("极简模式")}</span>
-        </button>
-      </aside>
-
-      <div className="wb-main" ref={mainRef}>
-        <header className="welcome-top wb-main-top">
-          <div className="wb-top-copy">
-            <span className="wb-top-eyebrow">CHAPTER / {paneMeta.eyebrow}</span>
-            {pane === "home" && <h2>{t(paneMeta.label)}</h2>}
-            <p>{paneSubtitle}</p>
-          </div>
-          <div className="spacer" />
-          <button className="home-mode-btn" onClick={onMinimal} title={t("切回极简首页")}>
-            <Icon name="book" size={14} />
-            {t("极简模式")}
-          </button>
-          <button className="icon-btn" title={theme === "light" ? t("切到夜幕") : t("切到夕阳")} onClick={onToggleTheme}>
-            <Icon name={theme === "light" ? "moon" : "sun"} size={17} />
-          </button>
-          <button className="icon-btn" title={t("偏好设置")} onClick={onSettings}>
-            <Icon name="settings" size={17} />
-          </button>
-        </header>
-
-        <div
-          key={pane}
-          className={`wb-view-frame ${paneDir > 0 ? "wb-view-in-up" : "wb-view-in-down"}`}
-        >
-        {pane === "home" ? (
+  const paneView = (which: WbPane) => (
+which === "home" ? (
           <main className="workbench">
             <div className="wb-glance">
               <div className="wb-glance-left">
@@ -637,7 +541,7 @@ export function WorkspaceHome({
               </section>
             </div>
           </main>
-        ) : pane === "shelf" ? (
+        ) : which === "shelf" ? (
           <main className="wb-pane wb-shelf">
             <div className="wb-pane-head">
               <div>
@@ -695,7 +599,7 @@ export function WorkspaceHome({
               </div>
             )}
           </main>
-        ) : pane === "stats" ? (
+        ) : which === "stats" ? (
           <main className="wb-pane wb-stats">
             <div className="wb-pane-head">
               <div>
@@ -839,7 +743,110 @@ export function WorkspaceHome({
               </div>
             )}
           </main>
-        )}
+        )
+  );
+
+  return (
+    <div className={`welcome workspace-home${stageOpen ? " stage-open" : ""}`}>
+      <aside className="wb-rail" aria-label={t("工作台导航")}>
+        <div className="wb-rail-brand">
+          <Logo size={25} className="logo" />
+          <div className="wb-rail-brand-text">
+            <b>Chapter</b>
+            <em>{t("小方工作室 · 小说写作")}</em>
+          </div>
+        </div>
+        <div className="wb-rail-seal">
+          <span>CHAPTER</span>
+          <i />
+          <span>{t("小说 · 写作 · 归档")}</span>
+        </div>
+
+        <nav className="wb-rail-nav">
+          {railItems.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              className={`wb-rail-item${pane === item.key ? " on" : ""}`}
+              aria-current={pane === item.key ? "page" : undefined}
+              onClick={() => switchPane(item.key)}
+              title={t(item.label)}
+            >
+              <Icon name={item.icon} size={16} />
+              <span className="wb-rail-label">{t(item.label)}</span>
+              {item.key === "notes" && notes.length > 0 && (
+                <em className="wb-rail-count">{notes.length}</em>
+              )}
+            </button>
+          ))}
+          <button type="button" className="wb-rail-item" onClick={onSettings} title={t("偏好设置")}>
+            <Icon name="settings" size={16} />
+            <span className="wb-rail-label">{t("偏好设置")}</span>
+          </button>
+        </nav>
+
+        <div className="wb-rail-spacer" />
+
+        <div className="wb-rail-quote">
+          <span className="wb-rail-quote-mark">“</span>
+          <p>{t(welcome)}</p>
+          <em>{t("今天想写点什么")}</em>
+        </div>
+
+        <div className="wb-rail-today">
+          <div className="wb-rail-today-head">
+            <span>{t("今天")}</span>
+            <b>
+              {fmtWords(todayWords)} <em>/ {fmtWords(goal)}</em>
+            </b>
+          </div>
+          <div className="wb-rail-progress">
+            <i style={{ width: `${pct}%` }} />
+          </div>
+          <p>
+            {t("连续写作")} <b>{streak}</b> {t("天")} · Chapter {t("陪你")} {days} {t("天")}
+          </p>
+        </div>
+
+        <button className="wb-rail-minimal" onClick={onMinimal}>
+          <Icon name="book" size={14} />
+          <span>{t("极简模式")}</span>
+        </button>
+      </aside>
+
+      <div className="wb-main" ref={mainRef}>
+        <header className="welcome-top wb-main-top">
+          <div className="wb-top-copy">
+            <span className="wb-top-eyebrow">CHAPTER / {paneMeta.eyebrow}</span>
+            {pane === "home" && <h2>{t(paneMeta.label)}</h2>}
+            <p>{paneSubtitle}</p>
+          </div>
+          <div className="spacer" />
+          <button className="home-mode-btn" onClick={onMinimal} title={t("切回极简首页")}>
+            <Icon name="book" size={14} />
+            {t("极简模式")}
+          </button>
+          <button className="icon-btn" title={theme === "light" ? t("切到夜幕") : t("切到夕阳")} onClick={onToggleTheme}>
+            <Icon name={theme === "light" ? "moon" : "sun"} size={17} />
+          </button>
+          <button className="icon-btn" title={t("偏好设置")} onClick={onSettings}>
+            <Icon name="settings" size={17} />
+          </button>
+        </header>
+
+        <div className="wb-view-stack">
+          {leaving && (
+            <div
+              key={`leave-${leaving}`}
+              className={`wb-view-frame is-leaving leave-${leaveDir}`}
+              aria-hidden="true"
+            >
+              {paneView(leaving)}
+            </div>
+          )}
+          <div key={pane} className={`wb-view-frame enter-${leaveDir}`}>
+            {paneView(pane)}
+          </div>
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { LanguageOption, UiLanguage } from "../types";
-import { LANGUAGES } from "../types";
+import { countryLabel, LANGUAGES } from "../types";
 import { t } from "../lib/i18n";
 import { Icon } from "./Icon";
 
@@ -19,6 +19,7 @@ function haystack(item: LanguageOption) {
     english: norm(item.english),
     country: norm(item.country),
     countryZh: norm(item.countryZh),
+    countryHant: norm(item.countryHant ?? ""),
     codes: item.codes.map(norm),
     key: norm(item.key),
   };
@@ -31,8 +32,9 @@ function score(item: LanguageOption, query: string) {
   if (h.codes.some((c) => c === query)) return 1;
   if (h.country.split("/").some((part) => part.startsWith(query))) return 2;
   if (h.countryZh.split("/").some((part) => part.startsWith(query))) return 2;
+  if (h.countryHant.split("/").some((part) => part.startsWith(query))) return 2;
   if (h.key === query) return 3;
-  const joined = `${h.label} ${h.english} ${h.country} ${h.countryZh} ${h.codes.join(" ")}`;
+  const joined = `${h.label} ${h.english} ${h.country} ${h.countryZh} ${h.countryHant} ${h.codes.join(" ")}`;
   return joined.includes(query) ? 4 : -1;
 }
 
@@ -80,7 +82,7 @@ export function LanguagePicker({ value, language, onChange }: Props) {
 
   useEffect(() => {
     if (!open) return;
-    const index = Math.max(0, filtered.findIndex((item) => item.key === value));
+    const index = Math.max(0, LANGUAGES.findIndex((item) => item.key === value));
     setActive(index);
     measure();
     const timer = window.setTimeout(() => inputRef.current?.focus(), 30);
@@ -99,7 +101,7 @@ export function LanguagePicker({ value, language, onChange }: Props) {
       window.removeEventListener("resize", onResize);
       window.removeEventListener("scroll", onResize, true);
     };
-  }, [open, measure, filtered, value]);
+  }, [open, measure, value]);
 
   useEffect(() => {
     if (active >= filtered.length) setActive(Math.max(0, filtered.length - 1));
@@ -177,7 +179,7 @@ export function LanguagePicker({ value, language, onChange }: Props) {
         }}
       >
         <span className="lang-trigger-main" dir={current.dir}>{current.label}</span>
-        <span className="lang-trigger-meta">{language === "zh" ? current.countryZh : current.country}</span>
+        <span className="lang-trigger-meta">{countryLabel(current, language)}</span>
         <Icon name="chevron" size={12} />
       </button>
 
@@ -233,7 +235,7 @@ export function LanguagePicker({ value, language, onChange }: Props) {
                 >
                   <span className="lang-option-main" dir={item.dir}>{item.label}</span>
                   <span className="lang-option-meta">
-                    {language === "zh" ? item.countryZh : item.country}
+                    {countryLabel(item, language)}
                     <i>{item.english}</i>
                   </span>
                   {item.key === value && <Icon name="check" size={13} />}

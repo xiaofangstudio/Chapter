@@ -142,7 +142,7 @@ export function NovelCover({
   const cjk = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/.test(name);
   const chars = Array.from(name).slice(0, compact ? 4 : 12);
   // 书名越长，字级越小；cqw 跟着组件宽度走，同一套排版在 34px 顶栏和 336px 书封上都成立。
-  const titleSize = compact ? 26 : Math.min(17, 84 / Math.max(4, chars.length));
+  const titleSize = compact ? 26 : Math.min(16, 84 / Math.max(4, chars.length));
 
   const vars = {
     "--cover-a": style.from,

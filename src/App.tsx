@@ -28,6 +28,7 @@ import type {
 } from "./types";
 import { LANGUAGES } from "./types";
 import { api, errText } from "./lib/api";
+performance.mark?.("chapter:app-module");
 import { countWords, dateKey } from "./lib/text";
 import { ensureUiPack, setUiLanguage, t, tf } from "./lib/i18n";
 import { useProximityGlow } from "./lib/glow";
@@ -268,6 +269,7 @@ export default function App() {
   const [modal, setModal] = useState<null | "new" | "export" | "snapshots" | "shelfSettings">(
     null,
   );
+  const modalCloseTimer = useRef<number | undefined>(undefined);
   const [settingsSection, setSettingsSection] = useState<
     "appearance" | "writing" | "ai" | "git" | "about"
   >("appearance");
@@ -305,7 +307,7 @@ export default function App() {
   const [coverPickerOpen, setCoverPickerOpen] = useState(false);
 
   const [toasts, setToasts] = useState<
-    { id: number; text: string; warn?: boolean; action?: { label: string; run: () => void } }[]
+    { id: number; text: string; warn?: boolean; leaving?: boolean; action?: { label: string; run: () => void } }[]
   >([]);
 
   const toastSeq = useRef(0);
@@ -328,9 +330,37 @@ export default function App() {
       const id = ++toastSeq.current;
       setToasts((t) => [...t, { id, text, warn: opts?.warn, action: opts?.action }]);
       window.setTimeout(
-        () => setToasts((t) => t.filter((x) => x.id !== id)),
+        () => {
+          setToasts((t) => t.map((x) => (x.id === id ? { ...x, leaving: true } : x)));
+          window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 180);
+        },
         opts?.action ? 6000 : 2800,
       );
+    },
+    [],
+  );
+
+  const closeModal = useCallback(() => {
+    if (document.documentElement.dataset.modalClosing === "1") return;
+    const calm =
+      document.documentElement.dataset.motion === "off" ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (calm) {
+      setModal(null);
+      return;
+    }
+    document.documentElement.dataset.modalClosing = "1";
+    window.clearTimeout(modalCloseTimer.current);
+    modalCloseTimer.current = window.setTimeout(() => {
+      document.documentElement.removeAttribute("data-modal-closing");
+      setModal(null);
+    }, 160);
+  }, []);
+
+  useEffect(
+    () => () => {
+      window.clearTimeout(modalCloseTimer.current);
+      document.documentElement.removeAttribute("data-modal-closing");
     },
     [],
   );
@@ -401,7 +431,8 @@ export default function App() {
 
   useEffect(() => {
     const meta = LANGUAGES.find((l) => l.key === language) ?? LANGUAGES[0];
-    document.documentElement.lang = language === "zh" ? "zh-CN" : language;
+    document.documentElement.lang =
+      language === "zh" ? "zh-CN" : language === "zhTW" ? "zh-Hant" : language;
     document.documentElement.dir = meta.dir;
     try {
       localStorage.setItem("chapter.lang", language);
@@ -504,14 +535,17 @@ export default function App() {
 
   useEffect(() => {
     let alive = true;
+    performance.mark?.("chapter:boot-start");
     (async () => {
       try {
         const lib = await api.library();
         if (alive) setLibrary(lib);
         const list = await api.listBooks();
+        performance.mark?.("chapter:boot-data");
         if (alive) {
           setBooks(list);
-          await loadCovers(list);
+          // 封面是装饰数据，不该挡住启动进入；先让界面可用，封面在后台补齐。
+          void loadCovers(list);
         }
       } catch (e) {
         toast(`初始化失败：${errText(e)}`, { warn: true });
@@ -519,8 +553,13 @@ export default function App() {
         window.setTimeout(() => {
           if (!alive) return;
           setSplashLeaving(true);
-          window.setTimeout(() => alive && setBooting(false), 480);
-        }, 420);
+          performance.mark?.("chapter:splash-leaving");
+          window.setTimeout(() => {
+            if (!alive) return;
+            setBooting(false);
+            performance.mark?.("chapter:splash-gone");
+          }, 320);
+        }, 180);
       }
     })();
     return () => {
@@ -564,7 +603,7 @@ export default function App() {
 
       const flushed = editorRef.current?.flush();
       const body = flushed !== undefined ? flushed : p.bodies[cid] ?? "";
-      const newWords = countWords(body);
+      const newWords = editorRef.current?.wordCount() ?? countWords(body);
       // 只按大纲里已有的章字数替换当前章，不再每次保存都重扫整本书 50 万字。
       const total = allChapters(p.outline).reduce(
         (n, c) => n + (c.id === cid ? newWords : c.words ?? 0),
@@ -1241,8 +1280,8 @@ export default function App() {
     (chapterId: string, title: string) => {
       const p = projectRef.current;
       if (!p) return;
-      const body = editorRef.current?.flush();
-      const safeBody = body !== undefined ? body : p.bodies[chapterId] ?? "";
+      // 改标题不顺手序列化整章正文：百万字章节每次改标题都全量转换会明显卡顿。
+      const safeBody = p.bodies[chapterId] ?? "";
       applyOutline((o) => {
         const c = allChapters(o).find((x) => x.id === chapterId);
         if (c) c.title = title;
@@ -2152,7 +2191,7 @@ export default function App() {
 
       <div className="toast-wrap">
         {toasts.map((t) => (
-          <div key={t.id} className={`toast${t.warn ? " warn" : ""}`}>
+          <div key={t.id} className={`toast${t.warn ? " warn" : ""}${t.leaving ? " leaving" : ""}`}>
             {t.text}
             {t.action && (
               <button
@@ -2195,7 +2234,7 @@ export default function App() {
       )}
 
       {modal === "new" && (
-        <NewBookDialog onClose={() => setModal(null)} onCreate={createBook} />
+        <NewBookDialog onClose={closeModal} onCreate={createBook} />
       )}
 
       {metaDialog && project && (
@@ -2211,7 +2250,7 @@ export default function App() {
           meta={project.meta}
           chapters={flat.length}
           words={bookWords}
-          onClose={() => setModal(null)}
+          onClose={closeModal}
           onExport={doExport}
         />
       )}
@@ -2219,7 +2258,7 @@ export default function App() {
       {modal === "snapshots" && (
         <SnapshotDialog
           snapshots={snapshots}
-          onClose={() => setModal(null)}
+          onClose={closeModal}
           onCreate={snapshotNow}
           onRestore={restoreSnapshot}
         />

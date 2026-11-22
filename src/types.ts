@@ -168,6 +168,7 @@ export type LanguageDir = "ltr" | "rtl";
 
 export type UiLanguage =
   | "zh"
+  | "zhTW"
   | "en"
   | "ja"
   | "ko"
@@ -226,12 +227,14 @@ export interface LanguageOption {
   english: string;
   country: string;
   countryZh: string;
+  countryHant?: string;
   codes: string[];
   dir: LanguageDir;
 }
 
 export const LANGUAGES: LanguageOption[] = [
   { key: "zh", label: "简体中文", english: "Chinese", country: "China", countryZh: "中国", codes: ["CN", "CH", "PRC", "ZH"], dir: "ltr" },
+  { key: "zhTW", label: "繁體中文", english: "Traditional Chinese", country: "Taiwan / Hong Kong / Macau", countryZh: "台湾 / 香港 / 澳门", codes: ["TW", "HK", "MO", "ZH", "HANT", "CHT", "繁体", "繁體", "繁中", "台灣", "台湾", "臺灣", "台", "港澳"], dir: "ltr" },
   { key: "en", label: "English", english: "English", country: "United States / United Kingdom", countryZh: "美国 / 英国", codes: ["US", "UK", "GB", "EN"], dir: "ltr" },
   { key: "ja", label: "日本語", english: "Japanese", country: "Japan", countryZh: "日本", codes: ["JP", "JA"], dir: "ltr" },
   { key: "ko", label: "한국어", english: "Korean", country: "South Korea", countryZh: "韩国", codes: ["KR", "KO"], dir: "ltr" },
@@ -284,6 +287,71 @@ export const LANGUAGES: LanguageOption[] = [
   { key: "az", label: "Azərbaycanca", english: "Azerbaijani", country: "Azerbaijan", countryZh: "阿塞拜疆", codes: ["AZ"], dir: "ltr" },
   { key: "kk", label: "Қазақша", english: "Kazakh", country: "Kazakhstan", countryZh: "哈萨克斯坦", codes: ["KZ"], dir: "ltr" },
 ];
+
+const HANT_COUNTRY: Record<string, string> = {
+  "中国": "中國",
+  "台湾 / 香港 / 澳门": "臺灣 / 香港 / 澳門",
+  "美国 / 英国": "美國 / 英國",
+  "日本": "日本",
+  "韩国": "韓國",
+  "法国": "法國",
+  "德国 / 奥地利": "德國 / 奧地利",
+  "西班牙 / 墨西哥 / 阿根廷": "西班牙 / 墨西哥 / 阿根廷",
+  "葡萄牙 / 巴西": "葡萄牙 / 巴西",
+  "俄罗斯": "俄羅斯",
+  "沙特阿拉伯 / 阿联酋 / 埃及": "沙烏地阿拉伯 / 阿聯酋 / 埃及",
+  "意大利": "義大利",
+  "荷兰 / 比利时": "荷蘭 / 比利時",
+  "土耳其": "土耳其",
+  "波兰": "波蘭",
+  "乌克兰": "烏克蘭",
+  "瑞典": "瑞典",
+  "丹麦": "丹麥",
+  "芬兰": "芬蘭",
+  "捷克": "捷克",
+  "希腊": "希臘",
+  "以色列": "以色列",
+  "印度": "印度",
+  "越南": "越南",
+  "印度尼西亚": "印度尼西亞",
+  "泰国": "泰國",
+  "伊朗": "伊朗",
+  "罗马尼亚": "羅馬尼亞",
+  "匈牙利": "匈牙利",
+  "保加利亚": "保加利亞",
+  "塞尔维亚": "塞爾維亞",
+  "克罗地亚": "克羅埃西亞",
+  "斯洛伐克": "斯洛伐克",
+  "斯洛文尼亚": "斯洛維尼亞",
+  "立陶宛": "立陶宛",
+  "拉脱维亚": "拉脫維亞",
+  "爱沙尼亚": "愛沙尼亞",
+  "西班牙（加泰罗尼亚）": "西班牙（加泰羅尼亞）",
+  "挪威": "挪威",
+  "马来西亚": "馬來西亞",
+  "菲律宾": "菲律賓",
+  "孟加拉国": "孟加拉國",
+  "巴基斯坦": "巴基斯坦",
+  "印度（泰米尔）": "印度（泰米爾）",
+  "印度（泰卢固）": "印度（泰盧固）",
+  "印度（马拉地）": "印度（馬拉地）",
+  "肯尼亚 / 坦桑尼亚": "肯亞 / 坦尚尼亞",
+  "南非": "南非",
+  "阿尔巴尼亚": "阿爾巴尼亞",
+  "北马其顿": "北馬其頓",
+  "亚美尼亚": "亞美尼亞",
+  "阿塞拜疆": "亞塞拜然",
+  "哈萨克斯坦": "哈薩克",
+};
+
+for (const item of LANGUAGES) {
+  item.countryHant = HANT_COUNTRY[item.countryZh] ?? item.country;
+}
+
+export function countryLabel(item: LanguageOption, language: UiLanguage): string {
+  if (language === "zhTW") return item.countryHant ?? item.country;
+  return language === "zh" ? item.countryZh : item.country;
+}
 
 export const LORE_KINDS: { key: LoreKind; label: string; icon: string }[] = [
   { key: "character", label: "人物", icon: "user" },

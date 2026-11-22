@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type {
   AccentTheme,
@@ -20,6 +20,7 @@ import { readScanRules, writeScanRules } from "../lib/split";
 import { Icon } from "./Icon";
 import { LanguagePicker } from "./LanguagePicker";
 import { Logo } from "./Logo";
+import { TreasureCard, TreasureChest } from "./TreasureChest";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
@@ -589,9 +590,10 @@ function GitPanel({ projectPath, onReloadProject, onSaveCurrent }: {
   );
 }
 
-function AboutPanel() {
-  const [version, setVersion] = useState("1.3.3");
+function AboutPanel({ language }: { language: UiLanguage }) {
+  const [version, setVersion] = useState("1.3.4");
   const [copied, setCopied] = useState(false);
+  const [treasure, setTreasure] = useState(false);
   useEffect(() => {
     getVersion().then(setVersion).catch(() => {});
   }, []);
@@ -626,15 +628,17 @@ function AboutPanel() {
             <b>fanggame.company</b>
           </button>
         </div>
+        <TreasureCard language={language} onOpen={() => setTreasure(true)} />
         <p className="set-about-foot">{t("本地优先 · 零账号 · 零联网 · 正文永远只在这台电脑上。")} · MIT</p>
       </div>
+      {treasure && <TreasureChest language={language} onClose={() => setTreasure(false)} />}
     </div>
   );
 }
 
 export function SettingsDialog(props: SettingsDialogProps) {
   const [section, setSection] = useState<Section>(props.initialSection ?? "appearance");
-  const [version, setVersion] = useState("1.3.3");
+  const [version, setVersion] = useState("1.3.4");
   useEffect(() => {
     getVersion().then(setVersion).catch(() => {});
   }, []);
@@ -649,18 +653,26 @@ export function SettingsDialog(props: SettingsDialogProps) {
     };
   });
   const [scanSaved, setScanSaved] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const closeTimer = useRef<number | undefined>(undefined);
+  const requestClose = useCallback(() => {
+    if (closing) return;
+    setClosing(true);
+    closeTimer.current = window.setTimeout(props.onClose, 220);
+  }, [closing, props.onClose]);
+
+  useEffect(() => () => window.clearTimeout(closeTimer.current), []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") props.onClose();
+      if (e.key === "Escape") requestClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [props]);
+  }, [requestClose]);
 
   const label = useMemo(() => {
-    if (!props.language || props.language === "zh") return "简体中文";
-    return LANGUAGES.find((l) => l.key === props.language)?.label ?? "English";
+    if (!props.language || props.language === "zh") return "简体中文";    return LANGUAGES.find((l) => l.key === props.language)?.label ?? "English";
   }, [props.language]);
 
   const saveScan = () => {
@@ -681,14 +693,14 @@ export function SettingsDialog(props: SettingsDialogProps) {
   };
 
   return (
-    <div className="settings-overlay" onMouseDown={(e) => e.target === e.currentTarget && props.onClose()}>
+    <div className={`settings-overlay${closing ? " closing" : ""}`} onMouseDown={(e) => e.target === e.currentTarget && requestClose()}>
       <div className="settings-shell glass" role="dialog" aria-modal="true" aria-label={t("偏好设置")}>
         <header className="settings-head">
           <div>
             <h1>{t("偏好设置")}</h1>
             <p>{t("仅影响这台电脑上的 Chapter。")}</p>
           </div>
-          <button className="icon-btn" onClick={props.onClose} title={t("关闭")}>
+          <button className="icon-btn" onClick={requestClose} title={t("关闭")}>
             <Icon name="close" size={16} />
           </button>
         </header>
@@ -837,7 +849,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
               <GitPanel projectPath={props.projectPath} onReloadProject={props.onReloadProject} onSaveCurrent={props.onSaveCurrent} />
             )}
 
-            {section === "about" && <AboutPanel />}
+            {section === "about" && <AboutPanel language={props.language} />}
           </div>
         </div>
       </div>
