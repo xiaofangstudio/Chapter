@@ -3026,9 +3026,15 @@ html[data-modal-closing="1"] .backdrop .modal {
   text-align: left;
 }
 
-.menu-item:hover {
+.menu-item:hover,
+.menu-item:focus-visible {
   background: var(--hover);
   color: var(--text);
+}
+
+.menu-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .menu-item.danger {
@@ -7325,7 +7331,9 @@ html[data-bg="image"] .welcome {
   z-index: 20;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 5px;
+  width: max-content;
   min-height: 18px;
   padding: 3px 7px;
   border-radius: var(--r-full);
@@ -11577,9 +11585,11 @@ body.stage-live .near-aura {
 
 /* 3D 书架：信息与控件始终压在书层之上，避免选书时侧书盖住标题 */
 .book-focus-top,
-.book-focus-info,
-.book-focus-dots {
+.book-focus-info {
   position: relative;
+  z-index: 80;
+}
+.book-focus-dots {
   z-index: 80;
 }
 .book-step { z-index: 80; }

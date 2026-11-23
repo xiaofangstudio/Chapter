@@ -23,6 +23,8 @@ export const api = {
     invoke<number>("save_chapter", { path, chapter, title, body }),
   deleteChapter: (path: string, chapter: string) =>
     invoke<void>("delete_chapter", { path, chapter }),
+  restoreChapter: (path: string, chapter: string) =>
+    invoke<boolean>("restore_chapter", { path, chapter }),
   deleteBook: (path: string) => invoke<void>("delete_book", { path }),
   setCover: (path: string, source: string) =>
     invoke<string>("set_cover", { path, source }),

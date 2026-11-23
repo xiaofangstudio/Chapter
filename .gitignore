@@ -19,3 +19,8 @@ yarn-error.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# ---- 三平台发布产物（走 Release，不入库）----
+release/*
+!release/下载说明.md
+!release/SHA256SUMS.txt

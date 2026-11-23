@@ -24,11 +24,42 @@ export function ContextMenu({
   minWidth?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const prevFocus = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    prevFocus.current = document.activeElement as HTMLElement | null;
+    const el = ref.current;
+    el?.querySelector<HTMLButtonElement>(".menu-item:not(:disabled)")?.focus({ preventScroll: true });
+    return () => {
+      const back = prevFocus.current;
+      if (back && document.contains(back)) back.focus({ preventScroll: true });
+    };
+  }, []);
 
   useEffect(() => {
     const close = () => onClose();
     const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (e.key === "Tab") {
+        onClose();
+        return;
+      }
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      const el = ref.current;
+      if (!el) return;
+      const list = Array.from(el.querySelectorAll<HTMLButtonElement>(".menu-item:not(:disabled)"));
+      if (!list.length) return;
+      e.preventDefault();
+      const at = list.indexOf(document.activeElement as HTMLButtonElement);
+      const next =
+        e.key === "ArrowDown"
+          ? list[(at + 1 + list.length) % list.length]
+          : list[(at - 1 + list.length) % list.length];
+      next?.focus();
     };
     const id = window.setTimeout(() => {
       document.addEventListener("mousedown", close);
@@ -57,6 +88,8 @@ export function ContextMenu({
     <div
       ref={ref}
       className="menu"
+      role="menu"
+      aria-label="menu"
       style={{ left: x, top: y, minWidth }}
       onMouseDown={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.preventDefault()}
@@ -64,7 +97,9 @@ export function ContextMenu({
       {items.map((it, i) => (
         <button
           key={`${it.label}-${i}`}
+          role="menuitem"
           className={`menu-item${it.danger ? " danger" : ""}`}
+          disabled={it.disabled}
           style={it.disabled ? { opacity: 0.4, pointerEvents: "none" } : undefined}
           onClick={(e) => {
             e.stopPropagation();

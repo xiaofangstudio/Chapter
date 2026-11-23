@@ -217,6 +217,23 @@ function readLS(key: string, fallback: string): string {
 
 /* ───────── 应用 ───────── */
 
+type UndoFile = {
+  id: string;
+  title: string;
+  body?: string;
+  /** 删章撤销：优先从 .md.deleted 原文件恢复，失败再补写。 */
+  preferDisk?: boolean;
+  /** 重命名撤销：用当前正文，只把标题改回去，避免覆盖之后写下的内容。 */
+  preserveBody?: boolean;
+};
+
+type UndoEntry = {
+  label: string;
+  outline: Outline;
+  activeId: string | null;
+  files?: UndoFile[];
+};
+
 export default function App() {
   useProximityGlow();
   const [books, setBooks] = useState<BookSummary[]>([]);
@@ -332,6 +349,8 @@ export default function App() {
   const savedTimer = useRef<number | undefined>(undefined);
   const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
   const saveStateRef = useRef<SaveState>("idle");
+  const undoRef = useRef<UndoEntry[]>([]);
+  const undoingRef = useRef(false);
 
   projectRef.current = project;
   activeRef.current = activeId;
@@ -829,6 +848,7 @@ export default function App() {
         if (projectRef.current) await saveAll(true);
         const raw = await api.openBook(path);
         const p = parseProject(raw);
+        undoRef.current = [];
         commit(p);
         void api.mcpSetProject(path).catch(() => undefined);
         lastSaved.current = { ...p.bodies };
@@ -864,6 +884,7 @@ export default function App() {
 
   const backToShelf = useCallback(async () => {
     await saveAll(true);
+    undoRef.current = [];
     setProject(null);
     setActiveId(null);
     setFocus(false);
@@ -882,6 +903,7 @@ export default function App() {
     try {
       const raw = await api.openBook(p.path);
       const fresh = parseProject(raw);
+      undoRef.current = [];
       commit(fresh);
       lastSaved.current = { ...fresh.bodies };
       const wanted = focusChapter && findChapter(fresh.outline, focusChapter) ? focusChapter : null;
@@ -987,6 +1009,7 @@ export default function App() {
     void listen<{ path: string }>("mcp-book-deleted", (e) => {
       if (disposed) return;
       if (projectRef.current?.path !== e.payload.path) return;
+      undoRef.current = [];
       setProject(null);
       setActiveId(null);
       setFocus(false);
@@ -1069,6 +1092,87 @@ export default function App() {
     [commit, scheduleOutline],
   );
 
+  /** 大纲结构操作的撤销快照。只存大纲与必要稿件，不复制整本书。 */
+  const pushUndo = useCallback(
+    (label: string, outline: Outline, active: string | null, files?: UndoFile[]) => {
+      undoRef.current.push({
+        label,
+        outline: structuredClone(outline),
+        activeId: active,
+        files,
+      });
+      if (undoRef.current.length > 20) undoRef.current.shift();
+    },
+    [],
+  );
+
+  const undoLast = useCallback(async () => {
+    if (undoingRef.current) return;
+    const entry = undoRef.current.pop();
+    const p = projectRef.current;
+    if (!entry || !p) return;
+    undoingRef.current = true;
+    const path = p.path;
+    let failed = false;
+
+    try {
+      for (const f of entry.files ?? []) {
+        try {
+          let ok = false;
+          if (f.preferDisk) {
+            ok = await api.restoreChapter(path, f.id);
+          }
+          if (!ok) {
+            const current = projectRef.current?.bodies[f.id];
+            const body = f.preserveBody && typeof current === "string" ? current : (f.body ?? "");
+            await api.saveChapter(path, f.id, f.title, body);
+          }
+        } catch {
+          failed = true;
+        }
+      }
+
+      const now = projectRef.current;
+      if (!now || now.path !== path) return;
+      const bodies = { ...now.bodies };
+      for (const f of entry.files ?? []) {
+        if (typeof f.body === "string" && bodies[f.id] === undefined) bodies[f.id] = f.body;
+      }
+      commit({ ...now, outline: structuredClone(entry.outline), bodies });
+      activeRef.current = entry.activeId;
+      setActiveId(entry.activeId);
+      scheduleOutline(entry.outline);
+      toast(
+        failed
+          ? tf("已撤销：{action}，但部分稿件未能写回，请检查工程目录", { action: entry.label })
+          : tf("已撤销：{action}", { action: entry.label }),
+        failed ? { warn: true } : undefined,
+      );
+    } finally {
+      undoingRef.current = false;
+    }
+  }, [commit, scheduleOutline, toast]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+      if (e.key.toLowerCase() !== "z") return;
+      const target = e.target as HTMLElement | null;
+      const typing =
+        !!target &&
+        (target.tagName === "TEXTAREA" ||
+          target.tagName === "INPUT" ||
+          target.isContentEditable);
+      if (typing) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      if (!undoRef.current.length) return;
+      e.preventDefault();
+      void undoLast();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [undoLast]);
+
   const addVolume = useCallback(() => {
     const p = projectRef.current;
     if (!p) return;
@@ -1083,6 +1187,7 @@ export default function App() {
       onOk: (value) => {
         const id = `v_${Date.now()}`;
         const title = value.trim() || fallback;
+        pushUndo(tf("新建「{title}」", { title }), p.outline, activeRef.current);
         applyOutline((o) => {
           o.volumes.push({ id, title, collapsed: false, chapters: [] });
           return o;
@@ -1091,7 +1196,7 @@ export default function App() {
         setPrompt(null);
       },
     });
-  }, [applyOutline, toast]);
+  }, [applyOutline, pushUndo, toast]);
 
   const addChapter = useCallback(
     async (volId: string) => {
@@ -1184,18 +1289,27 @@ export default function App() {
         confirmText: t("保存"),
         onOk: (value) => {
           if (!value) return;
+          const now = projectRef.current;
+          const current = now ? findChapter(now.outline, chapterId) : null;
+          if (!now || !current) return;
+          pushUndo(
+            tf("重命名「{title}」", { title: current.title }),
+            now.outline,
+            activeRef.current,
+            [{ id: chapterId, title: current.title, preserveBody: true }],
+          );
           applyOutline((o) => {
             const c = allChapters(o).find((x) => x.id === chapterId);
             if (c) c.title = value;
             return o;
           });
-          const body = p.bodies[chapterId] ?? "";
-          api.saveChapter(p.path, chapterId, value, body).catch(() => undefined);
+          const body = now.bodies[chapterId] ?? "";
+          api.saveChapter(now.path, chapterId, value, body).catch(() => undefined);
           setPrompt(null);
         },
       });
     },
-    [applyOutline],
+    [applyOutline, pushUndo],
   );
 
   const deleteChapter = useCallback(
@@ -1214,7 +1328,15 @@ export default function App() {
             await saveAll(true);
             const fresh = projectRef.current;
             if (!fresh) return;
+            const beforeActive = activeRef.current;
+            const body = fresh.bodies[chapterId] ?? "";
             await api.deleteChapter(fresh.path, chapterId);
+            pushUndo(
+              tf("删除「{title}」", { title: chapter.title }),
+              fresh.outline,
+              beforeActive,
+              [{ id: chapterId, title: chapter.title, body, preferDisk: true }],
+            );
             const flat = allChapters(fresh.outline);
             const idx = flat.findIndex((c) => c.id === chapterId);
             const neighbour = flat[idx + 1]?.id ?? flat[idx - 1]?.id ?? null;
@@ -1237,7 +1359,7 @@ export default function App() {
         },
       });
     },
-    [commit, saveAll, scheduleOutline, toast],
+    [commit, pushUndo, saveAll, scheduleOutline, toast],
   );
 
   const renameVolume = useCallback(
@@ -1252,6 +1374,14 @@ export default function App() {
         confirmText: t("保存"),
         onOk: (value) => {
           if (!value) return;
+          const now = projectRef.current;
+          const current = now?.outline.volumes.find((v) => v.id === volId);
+          if (!now || !current) return;
+          pushUndo(
+            tf("重命名「{title}」", { title: current.title }),
+            now.outline,
+            activeRef.current,
+          );
           applyOutline((o) => {
             const v = o.volumes.find((x) => x.id === volId);
             if (v) v.title = value;
@@ -1261,7 +1391,7 @@ export default function App() {
         },
       });
     },
-    [applyOutline],
+    [applyOutline, pushUndo],
   );
 
   const deleteVolume = useCallback(
@@ -1281,6 +1411,11 @@ export default function App() {
           if (!fresh) return;
           const outline = structuredClone(fresh.outline);
           outline.volumes = outline.volumes.filter((v) => v.id !== volId);
+          pushUndo(
+            tf("删除「{title}」", { title: vol.title }),
+            fresh.outline,
+            activeRef.current,
+          );
           commit({ ...fresh, outline });
           scheduleOutline(outline);
           if (activeRef.current && !findChapter(outline, activeRef.current)) {
@@ -1290,13 +1425,14 @@ export default function App() {
         },
       });
     },
-    [commit, saveAll, scheduleOutline, toast],
+    [commit, pushUndo, saveAll, scheduleOutline, toast],
   );
 
   const moveChapter = useCallback(
     (chId: string, toVol: string, beforeId: string | null) => {
       const p = projectRef.current;
       if (!p || chId === beforeId) return;
+      pushUndo(t("移动章节"), p.outline, activeRef.current);
       applyOutline((o) => {
         let moved: Chapter | null = null;
         for (const v of o.volumes) {
@@ -1315,12 +1451,15 @@ export default function App() {
         return o;
       });
     },
-    [applyOutline],
+    [applyOutline, pushUndo],
   );
 
   const moveVolume = useCallback(
     (fromId: string, toId: string) => {
       if (fromId === toId) return;
+      const p = projectRef.current;
+      if (!p) return;
+      pushUndo(t("移动本卷"), p.outline, activeRef.current);
       applyOutline((o) => {
         const from = o.volumes.findIndex((v) => v.id === fromId);
         const to = o.volumes.findIndex((v) => v.id === toId);
@@ -1330,12 +1469,15 @@ export default function App() {
         return o;
       });
     },
-    [applyOutline],
+    [applyOutline, pushUndo],
   );
 
   const moveScene = useCallback(
     (chId: string, sceneId: string, beforeId: string | null) => {
       if (sceneId === beforeId) return;
+      const p = projectRef.current;
+      if (!p) return;
+      pushUndo(t("移动场景"), p.outline, activeRef.current);
       applyOutline((o) => {
         const c = allChapters(o).find((x) => x.id === chId);
         if (!c) return o;
@@ -1348,7 +1490,7 @@ export default function App() {
         return o;
       });
     },
-    [applyOutline],
+    [applyOutline, pushUndo],
   );
 
   const toggleVolume = useCallback(
@@ -2171,6 +2313,7 @@ export default function App() {
                   onRenameChapter={renameChapter}
                   onDeleteChapter={deleteChapter}
                   onRenameVolume={renameVolume}
+                  onDeleteVolume={deleteVolume}
                 />
               )}
 

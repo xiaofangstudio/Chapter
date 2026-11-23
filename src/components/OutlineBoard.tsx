@@ -18,6 +18,7 @@ interface Props {
   onRenameChapter: (chapterId: string) => void;
   onDeleteChapter: (chapterId: string) => void;
   onRenameVolume: (volId: string) => void;
+  onDeleteVolume: (volId: string) => void;
 }
 
 export function OutlineBoard(props: Props) {
@@ -33,6 +34,7 @@ export function OutlineBoard(props: Props) {
     onRenameChapter,
     onDeleteChapter,
     onRenameVolume,
+    onDeleteVolume,
   } = props;
   const [drag, setDrag] = useState<{ vol: string; id: string } | null>(null);
   const [over, setOver] = useState<string | null>(null);
@@ -67,14 +69,27 @@ export function OutlineBoard(props: Props) {
     0
   );
 
-  const cardMenu = (chId: string, x: number, y: number) => {
+  const cardMenu = (chId: string, volId: string, x: number, y: number) => {
     setMenu({
       x,
       y,
       items: [
         { label: t("打开这一章"), icon: "book", onClick: () => onOpen(chId) },
+        { label: t("添加一章"), icon: "plus", onClick: () => onAddChapter(volId) },
         { label: t("重命名"), icon: "edit", onClick: () => onRenameChapter(chId) },
         { label: t("删除本章"), icon: "trash", danger: true, onClick: () => onDeleteChapter(chId) },
+      ],
+    });
+  };
+
+  const volumeMenu = (volId: string, x: number, y: number) => {
+    setMenu({
+      x,
+      y,
+      items: [
+        { label: t("添加一章"), icon: "plus", onClick: () => onAddChapter(volId) },
+        { label: t("重命名本卷"), icon: "edit", onClick: () => onRenameVolume(volId) },
+        { label: t("删除本卷"), icon: "trash", danger: true, onClick: () => onDeleteVolume(volId) },
       ],
     });
   };
@@ -131,7 +146,13 @@ export function OutlineBoard(props: Props) {
           const volWords = vol.chapters.reduce((a, c) => a + (c.words || 0), 0);
           return (
             <section className="board-vol" key={vol.id}>
-              <div className="board-vol-head">
+              <div
+                className="board-vol-head"
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  volumeMenu(vol.id, e.clientX, e.clientY);
+                }}
+              >
                 <span className="vol-no">{String(vi + 1).padStart(2, "0")}</span>
                 <h3>{vol.title || t("未命名卷")}</h3>
                 <span className="rule" />
@@ -157,6 +178,13 @@ export function OutlineBoard(props: Props) {
                       drag?.id === ch.id ? " dragging" : ""
                     }${ch.id === activeId ? " active" : ""}`}
                     onClick={() => onOpen(ch.id)}
+                    onContextMenu={(e) => {
+                      const tag = (e.target as HTMLElement).tagName;
+                      if (tag === "TEXTAREA" || tag === "INPUT") return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      cardMenu(ch.id, vol.id, e.clientX, e.clientY);
+                    }}
                     onDragOver={(e) => {
                       if (!drag) return;
                       e.preventDefault();
@@ -206,7 +234,7 @@ export function OutlineBoard(props: Props) {
                           onClick={(e) => {
                             e.stopPropagation();
                             const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                            cardMenu(ch.id, r.left - 130, r.bottom + 2);
+                            cardMenu(ch.id, vol.id, r.left - 130, r.bottom + 2);
                           }}
                         >
                           <Icon name="more" size={13} />

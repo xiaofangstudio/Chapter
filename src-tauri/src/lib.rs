@@ -566,6 +566,28 @@ fn delete_chapter(path: String, chapter: String) -> Result<(), String> {
     Ok(())
 }
 
+/// 撤销删章：优先把 .md.deleted 原样改回 .md；旧版本没有备份时由前端补写正文。
+#[tauri::command]
+fn restore_chapter(path: String, chapter: String) -> Result<bool, String> {
+    if !chapter
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err("章节 id 非法".into());
+    }
+    let dir = chapters_dir(&PathBuf::from(&path));
+    let deleted = dir.join(format!("{chapter}.md.deleted"));
+    let target = dir.join(format!("{chapter}.md"));
+    if !deleted.is_file() {
+        return Ok(false);
+    }
+    if target.exists() {
+        fs::remove_file(&target).map_err(|e| format!("撤销删除时清理旧稿失败：{e}"))?;
+    }
+    fs::rename(&deleted, &target).map_err(|e| format!("撤销删除失败：{e}"))?;
+    Ok(true)
+}
+
 #[tauri::command]
 fn delete_book(path: String) -> Result<(), String> {
     let p = PathBuf::from(&path);
@@ -1944,22 +1966,68 @@ fn print_pdf_html(doc: &PrintDoc) -> String {
     )
 }
 
-fn edge_binary() -> Option<PathBuf> {
-    let candidates = [
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-    ];
-    for c in candidates {
-        let p = PathBuf::from(c);
-        if p.is_file() {
-            return Some(p);
+fn find_on_path(names: &[&str]) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        for name in names {
+            let p = dir.join(name);
+            #[cfg(windows)]
+            let p = if p.extension().is_some() {
+                p
+            } else {
+                dir.join(format!("{name}.exe"))
+            };
+            if p.is_file() {
+                return Some(p);
+            }
         }
     }
     None
 }
 
+/// 生成 PDF 需要一个 Chromium 内核浏览器。Windows 用 Edge；macOS / Linux
+/// 依次寻找 Edge、Chrome、Chromium、Brave，避免导出功能只在 Windows 可用。
+fn print_browser() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        for c in [
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        ] {
+            let p = PathBuf::from(c);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        for app in ["Google Chrome", "Microsoft Edge", "Chromium", "Brave Browser"] {
+            for base in ["/Applications", "/Applications/Utilities"] {
+                let p = PathBuf::from(format!("{base}/{app}.app/Contents/MacOS/{app}"));
+                if p.is_file() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+
+    find_on_path(&[
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium",
+        "chromium-browser",
+        "microsoft-edge",
+        "microsoft-edge-stable",
+        "brave-browser",
+    ])
+}
+
 fn print_pdf(doc: &PrintDoc, dest: &Path) -> Result<(), String> {
-    let edge = edge_binary().ok_or("没有找到 Microsoft Edge，无法生成 PDF")?;
+    let browser = print_browser().ok_or("没有找到 Microsoft Edge / Google Chrome / Chromium，无法生成 PDF。安装其中任意一个后再试。")?;
     let stamp = now_ms();
     let tmp = std::env::temp_dir().join(format!("chapter-print-{}", stamp));
     ensure_dir(&tmp)?;
@@ -1972,7 +2040,7 @@ fn print_pdf(doc: &PrintDoc, dest: &Path) -> Result<(), String> {
             .replace('\\', "/")
             .replace(' ', "%20")
     );
-    let out = Command::new(edge)
+    let out = Command::new(browser)
         .args([
             "--headless=new",
             "--disable-gpu",
@@ -3764,6 +3832,7 @@ pub fn run() {
             save_chapter,
             read_chapter,
             delete_chapter,
+            restore_chapter,
             delete_book,
             set_cover,
             set_cover_image,

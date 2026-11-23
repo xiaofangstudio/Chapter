@@ -14,7 +14,6 @@ export function spineDepth(words: number): number {
 }
 
 const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
-const pad2 = (n: number) => String(n).padStart(2, "0");
 
 /**
  * 只渲染封面 + 两条侧边的平面书。
@@ -120,6 +119,9 @@ export function BookStage({ books, covers, initialPath, originRect, onClose, onE
   const [flight, setFlight] = useState<FlightState | null>(
     originRect ? { phase: "in", rect: originRect } : null,
   );
+  const dotCount = Math.min(count, 7);
+  const dotStart = count <= 7 ? 0 : Math.max(0, Math.min(focus - 3, count - 7));
+  const dots = books.slice(dotStart, dotStart + dotCount);
 
   const focusRef = useRef(initial);
   const posRef = useRef(initial);
@@ -140,7 +142,6 @@ export function BookStage({ books, covers, initialPath, originRect, onClose, onE
   const wheelIdle = useRef(0);
   const revealedRef = useRef(false);
   const revealedAt = useRef(0);
-  const dotThumbRef = useRef<HTMLElement | null>(null);
   const enteringRef = useRef(false);
   const enterRef = useRef<() => void>(() => undefined);
 
@@ -236,13 +237,6 @@ export function BookStage({ books, covers, initialPath, originRect, onClose, onE
       }
     }
 
-    const thumb = dotThumbRef.current;
-    if (thumb) {
-      const ratio = maxPos ? p / maxPos : 0;
-      const width = Math.max(10, 100 / Math.max(2, count));
-      thumb.style.width = `${width.toFixed(2)}%`;
-      thumb.style.left = `${(ratio * (100 - width)).toFixed(2)}%`;
-    }
     return tiltMoving;
   }, [count, maxPos]);
 
@@ -771,29 +765,21 @@ export function BookStage({ books, covers, initialPath, originRect, onClose, onE
         )}
       </div>
 
-      <div className={`book-focus-dots${count > 12 ? " is-rail" : ""}`} aria-label={t("书架")}>
-        {count <= 12 ? (
-          books.map((b, i) => (
+      <div className="book-focus-dots" aria-label={t("书架")}>
+        {dots.map((b, i) => {
+          const index = dotStart + i;
+          return (
             <button
               key={b.path}
               type="button"
-              className={i === focus ? "on" : ""}
-              onClick={() => jumpTo(i)}
+              className={index === focus ? "on" : ""}
+              onClick={() => jumpTo(index)}
               aria-label={b.title}
+              aria-current={index === focus ? "true" : undefined}
               title={b.title}
             />
-          ))
-        ) : (
-          <>
-            <span className="book-dot-count">
-              <b>{pad2(focus + 1)}</b>
-              <em>/ {count}</em>
-            </span>
-            <span className="book-dot-rail">
-              <i ref={dotThumbRef} />
-            </span>
-          </>
-        )}
+          );
+        })}
       </div>
 
       {flight && focused && (

@@ -3,7 +3,7 @@
 > **小方工作室 · 出品** ｜ 规格 `v1.4.0` ｜ 2026-11-22 ｜ 状态：三期迭代中，二期功能已实现
 > 对标 Scrivener ｜ 全中文（含 65 种语言与 RTL） ｜ 本地优先 ｜ 零账号 ｜ AI 走本机 MCP ｜ MIT
 >
-> 安装包与免安装 exe 见 [Releases](https://github.com/xiaofangstudio/Chapter/releases)。
+> 安装包与免安装 exe 见 [Releases](https://github.com/xiaofangstudio/Chapter/releases)：Windows 有安装版与便携版，Linux 有 `.deb` 与 `.AppImage`，macOS 提供构建包（`.dmg` 需在 Mac 上打）。
 >
 > 原清单名 Scribelo，因过长更名为 **Chapter**。一章一章写下去，就是这软件的全部意思。
 

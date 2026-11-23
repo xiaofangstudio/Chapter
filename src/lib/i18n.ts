@@ -211,6 +211,15 @@ const en: Pack = {
   "再点一次": "Click again",
   "跳转中…": "Leaving…",
   "关掉": "Close",
+  "重命名「{title}」": "Renamed “{title}”",
+  "删除「{title}」": "Deleted “{title}”",
+  "新建「{title}」": "Created “{title}”",
+  "移动章节": "Move chapter",
+  "移动本卷": "Move volume",
+  "移动场景": "Move scene",
+  "已撤销：{action}": "Undid: {action}",
+  "已撤销：{action}，但部分稿件未能写回，请检查工程目录":
+    "Undid: {action}. Some chapter files could not be restored; check the project folder.",
 };
 
 const ja: Pack = {
