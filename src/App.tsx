@@ -21,6 +21,7 @@ import type {
   Project,
   RawProject,
   SaveState,
+  SeriesMeta,
   SnapshotInfo,
   ThemeMode,
   UiLanguage,
@@ -55,6 +56,7 @@ import {
 } from "./components/Modals";
 import { CoverCropDialog } from "./components/CoverCropDialog";
 import { CoverPickerDialog } from "./components/CoverPickerDialog";
+import { TransferDialog } from "./components/TransferDialog";
 
 const PrintStudio = lazy(() =>
   import("./components/PrintStudio").then((m) => ({ default: m.PrintStudio })),
@@ -72,6 +74,9 @@ const BookOutline = lazy(() =>
   import("./components/BookOutline").then((m) => ({ default: m.BookOutline })),
 );
 const LoreView = lazy(() => import("./components/LoreView").then((m) => ({ default: m.LoreView })));
+const ComicWorkspace = lazy(() =>
+  import("./components/ComicWorkspace").then((m) => ({ default: m.ComicWorkspace })),
+);
 const ImportDialog = lazy(() =>
   import("./components/ImportDialog").then((m) => ({ default: m.ImportDialog })),
 );
@@ -237,6 +242,7 @@ type UndoEntry = {
 export default function App() {
   useProximityGlow();
   const [books, setBooks] = useState<BookSummary[]>([]);
+  const [series, setSeries] = useState<SeriesMeta[]>([]);
   const [covers, setCovers] = useState<Record<string, string>>({});
   const [library, setLibrary] = useState("");
   const [booting, setBooting] = useState(true);
@@ -248,6 +254,10 @@ export default function App() {
   const [loreMode, setLoreMode] = useState<"cards" | "graph" | "map">("cards");
   const [focus, setFocus] = useState(false);
   const [panel, setPanel] = useState(true);
+
+  useEffect(() => {
+    if (view === "write" && project?.meta.kind === "comic") setPanel(false);
+  }, [view, project?.meta.kind, project?.path]);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([]);
   const [themeMode, setThemeMode] = useState<ThemeMode>(
@@ -334,6 +344,8 @@ export default function App() {
     name: string;
   } | null>(null);
   const [coverPickerOpen, setCoverPickerOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferBookPath, setTransferBookPath] = useState<string | null>(null);
 
   const [toasts, setToasts] = useState<
     { id: number; text: string; warn?: boolean; leaving?: boolean; action?: { label: string; run: () => void } }[]
@@ -628,11 +640,57 @@ export default function App() {
     try {
       const list = await api.listBooks();
       setBooks(list);
+      setSeries(await api.listSeries());
       await loadCovers(list);
     } catch (e) {
       toast(`读取书架失败：${errText(e)}`, { warn: true });
     }
   }, [loadCovers, toast]);
+
+  const createSeries = useCallback(
+    async (name: string, description?: string) => {
+      const created = await api.createSeries(name, description);
+      await refreshBooks();
+      return created;
+    },
+    [refreshBooks],
+  );
+
+  const updateSeries = useCallback(
+    async (id: string, name: string, description?: string) => {
+      const updated = await api.updateSeries(id, name, description);
+      await refreshBooks();
+      return updated;
+    },
+    [refreshBooks],
+  );
+
+  const deleteSeries = useCallback(
+    async (id: string) => {
+      await api.deleteSeries(id);
+      await refreshBooks();
+    },
+    [refreshBooks],
+  );
+
+  const assignBookSeries = useCallback(
+    async (book: BookSummary, seriesId: string | null) => {
+      await api.assignBookSeries(book.path, seriesId);
+      await refreshBooks();
+    },
+    [refreshBooks],
+  );
+
+  const seriesCharacters = useCallback(async (seriesId: string) => {
+    return api.seriesCharacters(seriesId);
+  }, []);
+
+  const setSeriesShared = useCallback(
+    async (seriesId: string, bookId: string, entryId: string, shared: boolean) => {
+      await api.setSeriesShared(seriesId, bookId, entryId, shared);
+    },
+    [],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -642,9 +700,11 @@ export default function App() {
         const lib = await api.library();
         if (alive) setLibrary(lib);
         const list = await api.listBooks();
+        const groups = await api.listSeries();
         performance.mark?.("chapter:boot-data");
         if (alive) {
           setBooks(list);
+          setSeries(groups);
           // 封面是装饰数据，不该挡住启动进入；先让界面可用，封面在后台补齐。
           void loadCovers(list);
         }
@@ -843,9 +903,9 @@ export default function App() {
   }, []);
 
   const openProject = useCallback(
-    async (path: string) => {
+    async (path: string, opts?: { skipSave?: boolean }) => {
       try {
-        if (projectRef.current) await saveAll(true);
+        if (projectRef.current && !opts?.skipSave) await saveAll(true);
         const raw = await api.openBook(path);
         const p = parseProject(raw);
         undoRef.current = [];
@@ -861,7 +921,7 @@ export default function App() {
         setFocus(false);
         setIntro(true);
         setSaveState("idle");
-        window.setTimeout(() => {
+        if (p.meta.kind !== "comic") window.setTimeout(() => {
           api
             .createSnapshot(path, "打开时自动备份")
             .then((list) => setSnapshots(list))
@@ -1054,6 +1114,7 @@ export default function App() {
       setView("write");
       const p = projectRef.current;
       if (p) {
+        if (p.meta.kind === "comic") setPanel(false);
         const meta = { ...p.meta, lastChapterId: id };
         commit({ ...p, meta });
         api.saveJson(p.path, "book.json", JSON.stringify(meta)).catch(() => undefined);
@@ -1072,6 +1133,7 @@ export default function App() {
       setView("write");
       const p = projectRef.current;
       if (p) {
+        if (p.meta.kind === "comic") setPanel(false);
         const meta = { ...p.meta, lastChapterId: id };
         commit({ ...p, meta });
         api.saveJson(p.path, "book.json", JSON.stringify(meta)).catch(() => undefined);
@@ -1215,7 +1277,8 @@ export default function App() {
         }
       }
       const id = `c_${Date.now()}`;
-      const title = `第${vol.chapters.length + 1}章`;
+      const comic = p.meta.kind === "comic";
+      const title = comic ? `第${vol.chapters.length + 1}话` : `第${vol.chapters.length + 1}章`;
       const ch: Chapter = {
         id,
         title,
@@ -1223,6 +1286,7 @@ export default function App() {
         scenes: [],
         words: 0,
         updatedAt: Date.now(),
+        ...(comic ? { kind: "comic" as const } : {}),
       };
       vol.chapters.push(ch);
       const next: Project = {
@@ -1240,7 +1304,7 @@ export default function App() {
       } catch (e) {
         toast(`创建章节失败：${errText(e)}`, { warn: true });
       }
-      window.setTimeout(() => editorRef.current?.focus(), 120);
+      if (!comic) window.setTimeout(() => editorRef.current?.focus(), 120);
     },
     [commit, saveAll, scheduleOutline, toast],
   );
@@ -1841,12 +1905,19 @@ export default function App() {
   /* ───────── 新建 ───────── */
 
   const createBook = useCallback(
-    async (title: string, author: string, target: number, goal: number, template: "blank" | "three") => {
+    async (
+      title: string,
+      author: string,
+      target: number,
+      goal: number,
+      template: "blank" | "three",
+      kind: "novel" | "comic",
+    ) => {
       setModal(null);
       try {
-        const raw = await api.createBook(title, author, target, goal);
+        const raw = await api.createBook(title, author, target, goal, kind);
         let p = parseProject(raw);
-        if (template === "three") {
+        if (template === "three" && kind !== "comic") {
           const plan: { vol: string; chapters: string[] }[] = [
             { vol: "第一幕 · 建置", chapters: ["第一章 日常", "第二章 意外", "第三章 无法回头"] },
             { vol: "第二幕 · 对抗", chapters: ["第四章 试错", "第五章 中点", "第六章 代价"] },
@@ -1876,6 +1947,7 @@ export default function App() {
         }
         commit(p);
         lastSaved.current = { ...p.bodies };
+        if (kind === "comic") setPanel(false);
         const first = firstChapterId(p.outline);
         setActiveId(first);
         setView("write");
@@ -1886,8 +1958,8 @@ export default function App() {
           .createSnapshot(p.path, "新建时")
           .then((list) => setSnapshots(list))
           .catch(() => undefined);
-        toast(`《${title}》已建好，开始写吧`);
-        window.setTimeout(() => editorRef.current?.focus(), 300);
+        toast(kind === "comic" ? `《${title}》已建好，开始画吧` : `《${title}》已建好，开始写吧`);
+        if (kind !== "comic") window.setTimeout(() => editorRef.current?.focus(), 300);
       } catch (e) {
         toast(`新建失败：${errText(e)}`, { warn: true });
       }
@@ -2224,6 +2296,10 @@ export default function App() {
               setModal("export");
             }}
             onImport={() => void pickImport("append")}
+            onTransfer={() => {
+              setTransferBookPath(project.path);
+              setTransferOpen(true);
+            }}
             onSnapshots={() => {
               void loadSnapshots(project.path);
               setModal("snapshots");
@@ -2255,10 +2331,22 @@ export default function App() {
               onMoveScene={moveScene}
             />
 
-            <main className="stage">
+            <main className={`stage${panel ? " panel-open" : ""}`}>
               <Suspense fallback={<div className="lazy-fallback">{t("正在准备写作台…")}</div>}>
               {view === "write" &&
                 (activeChapter ? (
+                  project.meta.kind === "comic" ? (
+                    <Suspense fallback={<div className="lazy-fallback">{t("正在打开漫画画布…")}</div>}>
+                      <ComicWorkspace
+                        key={`${project.path}:${activeChapter.id}`}
+                        path={project.path}
+                        meta={project.meta}
+                        embedded
+                        chapterId={activeChapter.id}
+                        firstChapterId={flat[0]?.id}
+                      />
+                    </Suspense>
+                  ) : (
                   <Editor
                     key={`${project.path}:${activeChapter.id}:${editorEpoch}`}
                     chapter={activeChapter}
@@ -2281,6 +2369,7 @@ export default function App() {
                     onInsertLore={() => setLorePicker(true)}
                     onToggleFocus={() => setFocus((f) => !f)}
                   />
+                  )
                 ) : (
                   <div className="view-scroll">
                     <div className="view-inner">
@@ -2393,13 +2482,24 @@ export default function App() {
       ) : homeMode === "workspace" ? (
         <WorkspaceHome
           books={books}
+          series={series}
           covers={covers}
           totalWords={books.reduce((n, b) => n + b.words, 0)}
           dailyLog={dailyLog}
           theme={theme}
           onOpen={(b) => openProject(b.path)}
+          onCreateSeries={createSeries}
+          onUpdateSeries={updateSeries}
+          onDeleteSeries={deleteSeries}
+          onAssignSeries={assignBookSeries}
+          onSeriesCharacters={seriesCharacters}
+          onSetSeriesShared={setSeriesShared}
           onNew={() => setModal("new")}
           onImport={() => void pickImport("new")}
+          onTransfer={() => {
+            setTransferBookPath(null);
+            setTransferOpen(true);
+          }}
           onOpenFolder={openExisting}
           onSettings={() => openSettings()}
           onToggleTheme={toggleTheme}
@@ -2416,6 +2516,10 @@ export default function App() {
           onNew={() => setModal("new")}
           onImport={() => void pickImport("new")}
           onWorkspace={() => setHomeMode("workspace")}
+          onTransfer={() => {
+            setTransferBookPath(null);
+            setTransferOpen(true);
+          }}
           onOpenFolder={openExisting}
           onRename={(b) => {
             setPrompt({
@@ -2656,6 +2760,18 @@ export default function App() {
           onSave={(scene) => {
             addScene(sceneEdit.chapterId, scene);
             setSceneEdit(null);
+          }}
+        />
+      )}
+      {transferOpen && (
+        <TransferDialog
+          bookPath={transferBookPath}
+          outline={project?.outline ?? null}
+          onClose={() => setTransferOpen(false)}
+          onApplied={(path) => {
+            setTransferOpen(false);
+            void openProject(path, { skipSave: true });
+            void refreshBooks();
           }}
         />
       )}

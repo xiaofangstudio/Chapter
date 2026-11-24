@@ -16,6 +16,7 @@ interface Props {
   onNew: () => void;
   onImport: () => void;
   onWorkspace: () => void;
+  onTransfer: () => void;
   onOpenFolder: () => void;
   onRename: (book: BookSummary) => void;
   onDelete: (book: BookSummary) => void;
@@ -34,6 +35,7 @@ export function Welcome({
   onNew,
   onImport,
   onWorkspace,
+  onTransfer,
   onOpenFolder,
   onRename,
   onDelete,
@@ -72,6 +74,10 @@ export function Welcome({
           <span className="brand-sub">{t("小方工作室 · 小说写作工作台")}</span>
         </div>
         <div className="spacer" />
+        <button className="home-mode-btn" onClick={onTransfer} title={t("手机互传")}>
+          <Icon name="arrow" size={14} />
+          {t("手机互传")}
+        </button>
         <button className="home-mode-btn" onClick={onWorkspace} title={t("切到工作台模式")}>
           <Icon name="panel" size={14} />
           {t("工作台模式")}

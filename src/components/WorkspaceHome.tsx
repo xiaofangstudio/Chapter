@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import type { BookSummary, UiLanguage } from "../types";
+import type { BookSummary, SeriesCharacter, SeriesMeta, UiLanguage } from "../types";
 import { dateKey, fmtWords, mdToHtml, relTime } from "../lib/text";
 import { t } from "../lib/i18n";
 import { companionDays, pickWelcome } from "../lib/welcome";
@@ -11,6 +11,7 @@ import { NovelCover } from "./NovelCover";
 
 interface Props {
   books: BookSummary[];
+  series: SeriesMeta[];
   covers: Record<string, string>;
   totalWords: number;
   dailyLog: Record<string, number>;
@@ -19,10 +20,17 @@ interface Props {
   onNew: () => void;
   onImport: () => void;
   onOpenFolder: () => void;
+  onTransfer: () => void;
   onSettings: () => void;
   onToggleTheme: () => void;
   onMinimal: () => void;
   language: UiLanguage;
+  onCreateSeries: (name: string, description?: string) => Promise<SeriesMeta>;
+  onUpdateSeries: (id: string, name: string, description?: string) => Promise<SeriesMeta>;
+  onDeleteSeries: (id: string) => Promise<void>;
+  onAssignSeries: (book: BookSummary, seriesId: string | null) => Promise<void>;
+  onSeriesCharacters: (seriesId: string) => Promise<SeriesCharacter[]>;
+  onSetSeriesShared: (seriesId: string, bookId: string, entryId: string, shared: boolean) => Promise<void>;
 }
 
 type WbPane = "home" | "shelf" | "stats" | "notes";
@@ -143,6 +151,7 @@ const PANE_META: Record<WbPane, { label: string; eyebrow: string }> = {
 
 export function WorkspaceHome({
   books,
+  series,
   covers,
   totalWords,
   dailyLog,
@@ -151,10 +160,17 @@ export function WorkspaceHome({
   onNew,
   onImport,
   onOpenFolder,
+  onTransfer,
   onSettings,
   onToggleTheme,
   onMinimal,
   language,
+  onCreateSeries,
+  onUpdateSeries,
+  onDeleteSeries,
+  onAssignSeries,
+  onSeriesCharacters,
+  onSetSeriesShared,
 }: Props) {
   const now = new Date();
   const locale = document.documentElement.lang || "zh-CN";
@@ -176,6 +192,16 @@ export function WorkspaceHome({
   const [stageOpen, setStageOpen] = useState(false);
   const [stageOrigin, setStageOrigin] = useState<DOMRect | null>(null);
   const [query, setQuery] = useState("");
+  const [shelfFilter, setShelfFilter] = useState<string>("all");
+  const [seriesOpen, setSeriesOpen] = useState(false);
+  const [selectedSeriesId, setSelectedSeriesId] = useState<string | null>(null);
+  const [seriesChars, setSeriesChars] = useState<SeriesCharacter[]>([]);
+  const [seriesBusy, setSeriesBusy] = useState(false);
+  const [seriesError, setSeriesError] = useState("");
+  const [newSeriesName, setNewSeriesName] = useState("");
+  const [seriesNameDraft, setSeriesNameDraft] = useState("");
+  const [seriesDescDraft, setSeriesDescDraft] = useState("");
+  const [seriesDeleteArmed, setSeriesDeleteArmed] = useState(false);
   const [shelfPage, setShelfPage] = useState(1);
   const PAGE_SIZE = 24;
   const [notes, setNotes] = useState<Note[]>(readNotes);
@@ -332,11 +358,15 @@ export function WorkspaceHome({
   );
   const maxBookWords = Math.max(1, ...ranking.map((b) => b.words));
 
+  const seriesById = useMemo(() => new Map(series.map((s) => [s.id, s])), [series]);
   const shelfBooks = useMemo(() => {
+    let list = books;
+    if (shelfFilter === "none") list = list.filter((b) => !b.seriesId);
+    else if (shelfFilter !== "all") list = list.filter((b) => b.seriesId === shelfFilter);
     const q = query.trim().toLowerCase();
-    if (!q) return books;
-    return books.filter((b) => `${b.title} ${b.author}`.toLowerCase().includes(q));
-  }, [books, query]);
+    if (!q) return list;
+    return list.filter((b) => `${b.title} ${b.author}`.toLowerCase().includes(q));
+  }, [books, query, shelfFilter]);
   const shelfPageCount = Math.max(1, Math.ceil(shelfBooks.length / PAGE_SIZE));
   const pagedShelf = useMemo(
     () => shelfBooks.slice((shelfPage - 1) * PAGE_SIZE, shelfPage * PAGE_SIZE),
@@ -346,6 +376,138 @@ export function WorkspaceHome({
   useEffect(() => {
     if (shelfPage > shelfPageCount) setShelfPage(shelfPageCount);
   }, [shelfPage, shelfPageCount]);
+
+  const selectedSeries = useMemo(
+    () => (selectedSeriesId ? series.find((s) => s.id === selectedSeriesId) ?? null : null),
+    [selectedSeriesId, series],
+  );
+  const groupBooks = useMemo(
+    () => (selectedSeries ? books.filter((b) => b.seriesId === selectedSeries.id) : []),
+    [books, selectedSeries],
+  );
+  const seriesCandidates = useMemo(
+    () => (selectedSeries ? books.filter((b) => b.seriesId !== selectedSeries.id) : []),
+    [books, selectedSeries],
+  );
+
+  useEffect(() => {
+    if (!seriesOpen) return;
+    if (!series.length) {
+      setSelectedSeriesId(null);
+      return;
+    }
+    if (!selectedSeriesId || !series.some((s) => s.id === selectedSeriesId)) {
+      setSelectedSeriesId(series[0].id);
+    }
+  }, [seriesOpen, series, selectedSeriesId]);
+
+  useEffect(() => {
+    const group = series.find((s) => s.id === selectedSeriesId) ?? null;
+    setSeriesNameDraft(group?.name ?? "");
+    setSeriesDescDraft(group?.description ?? "");
+    setSeriesDeleteArmed(false);
+    if (!group) {
+      setSeriesChars([]);
+      return;
+    }
+    let alive = true;
+    setSeriesBusy(true);
+    setSeriesError("");
+    onSeriesCharacters(group.id)
+      .then((chars) => {
+        if (alive) setSeriesChars(chars);
+      })
+      .catch((e) => {
+        if (alive) setSeriesError(e instanceof Error ? e.message : String(e));
+      })
+      .finally(() => {
+        if (alive) setSeriesBusy(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [selectedSeriesId, series, onSeriesCharacters]);
+
+  const closeSeries = () => {
+    setSeriesOpen(false);
+    setSeriesDeleteArmed(false);
+  };
+
+  const createSeriesNow = async () => {
+    const name = newSeriesName.trim();
+    if (!name) return;
+    setSeriesBusy(true);
+    setSeriesError("");
+    try {
+      const created = await onCreateSeries(name);
+      setNewSeriesName("");
+      setSelectedSeriesId(created.id);
+    } catch (e) {
+      setSeriesError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSeriesBusy(false);
+    }
+  };
+
+  const saveSeriesNow = async () => {
+    if (!selectedSeries) return;
+    setSeriesBusy(true);
+    setSeriesError("");
+    try {
+      await onUpdateSeries(selectedSeries.id, seriesNameDraft.trim() || selectedSeries.name, seriesDescDraft);
+    } catch (e) {
+      setSeriesError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSeriesBusy(false);
+    }
+  };
+
+  const assignNow = async (book: BookSummary, seriesId: string | null) => {
+    setSeriesBusy(true);
+    setSeriesError("");
+    try {
+      await onAssignSeries(book, seriesId);
+    } catch (e) {
+      setSeriesError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSeriesBusy(false);
+    }
+  };
+
+  const deleteSeriesNow = async () => {
+    if (!selectedSeries) return;
+    setSeriesBusy(true);
+    setSeriesError("");
+    try {
+      await onDeleteSeries(selectedSeries.id);
+      setSelectedSeriesId(null);
+      setSeriesDeleteArmed(false);
+    } catch (e) {
+      setSeriesError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSeriesBusy(false);
+    }
+  };
+
+  const toggleShared = async (char: SeriesCharacter) => {
+    if (!selectedSeries) return;
+    const next = !char.shared;
+    setSeriesChars((prev) =>
+      prev.map((c) =>
+        c.bookId === char.bookId && c.entryId === char.entryId ? { ...c, shared: next } : c,
+      ),
+    );
+    try {
+      await onSetSeriesShared(selectedSeries.id, char.bookId, char.entryId, next);
+    } catch (e) {
+      setSeriesChars((prev) =>
+        prev.map((c) =>
+          c.bookId === char.bookId && c.entryId === char.entryId ? { ...c, shared: !next } : c,
+        ),
+      );
+      setSeriesError(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   const togglePin = () => {
     if (!current) return;
@@ -658,6 +820,50 @@ which === "home" ? (
               </div>
             </div>
 
+            <div className="wb-series-bar">
+              <div className="wb-series-chips" role="tablist" aria-label={t("书组筛选")}>
+                <button
+                  className={`wb-series-chip${shelfFilter === "all" ? " on" : ""}`}
+                  onClick={() => {
+                    setShelfFilter("all");
+                    setShelfPage(1);
+                  }}
+                >
+                  {t("全部")} <em>{books.length}</em>
+                </button>
+                <button
+                  className={`wb-series-chip${shelfFilter === "none" ? " on" : ""}`}
+                  onClick={() => {
+                    setShelfFilter("none");
+                    setShelfPage(1);
+                  }}
+                >
+                  {t("未分组")} <em>{books.filter((b) => !b.seriesId).length}</em>
+                </button>
+                {series.map((s) => (
+                  <button
+                    key={s.id}
+                    className={`wb-series-chip${shelfFilter === s.id ? " on" : ""}`}
+                    onClick={() => {
+                      setShelfFilter(s.id);
+                      setShelfPage(1);
+                    }}
+                  >
+                    {s.name} <em>{books.filter((b) => b.seriesId === s.id).length}</em>
+                  </button>
+                ))}
+              </div>
+              <button
+                className="wb-series-manage"
+                onClick={() => {
+                  setSeriesOpen(true);
+                  setSelectedSeriesId(series[0]?.id ?? null);
+                }}
+              >
+                {t("管理书组")}
+              </button>
+            </div>
+
             {shelfBooks.length === 0 ? (
               <div className="wb-pane-empty">
                 <Icon name="book" size={26} />
@@ -682,8 +888,16 @@ which === "home" ? (
                       <h3>{b.title || t("未命名")}</h3>
                       <p>{b.author || t("佚名")}</p>
                       <span>
-                        {b.chapterCount} {t("章")} · {fmtWords(b.words)} {t("字")} · {relTime(b.updatedAt)}
+                        {b.kind === "comic"
+                          ? `${t("漫画")} · ${relTime(b.updatedAt)}`
+                          : `${b.chapterCount} ${t("章")} · ${fmtWords(b.words)} ${t("字")} · ${relTime(b.updatedAt)}`}
                       </span>
+                      {b.seriesId && seriesById.get(b.seriesId) && (
+                        <small className="wb-shelf-series">
+                          <i />
+                          {seriesById.get(b.seriesId)?.name}
+                        </small>
+                      )}
                     </div>
                   </button>
                 ))}
@@ -1050,6 +1264,10 @@ which === "home" ? (
             <p>{paneSubtitle}</p>
           </div>
           <div className="spacer" />
+          <button className="home-mode-btn" onClick={onTransfer} title={t("手机互传")}>
+            <Icon name="arrow" size={14} />
+            {t("手机互传")}
+          </button>
           <button className="home-mode-btn" onClick={onMinimal} title={t("切回极简首页")}>
             <Icon name="book" size={14} />
             {t("极简模式")}
@@ -1077,6 +1295,238 @@ which === "home" ? (
           </div>
         </div>
       </div>
+
+      {seriesOpen && (
+        <div className="wb-series-mask" onClick={closeSeries}>
+          <div className="wb-series-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="wb-series-head">
+              <div>
+                <b>{t("书组")}</b>
+                <span>{t("把同一世界观的书连起来；书还是各自独立，只共享最少信息。")}</span>
+              </div>
+              <button className="wb-series-close" onClick={closeSeries} aria-label={t("关闭")}>
+                ×
+              </button>
+            </div>
+
+            <div className="wb-series-body">
+              <aside className="wb-series-side">
+                <div className="wb-series-new">
+                  <input
+                    value={newSeriesName}
+                    onChange={(e) => setNewSeriesName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void createSeriesNow();
+                    }}
+                    placeholder={t("新书组名，例如「方岛纪事」")}
+                    maxLength={24}
+                  />
+                  <button
+                    disabled={!newSeriesName.trim() || seriesBusy}
+                    onClick={() => void createSeriesNow()}
+                  >
+                    <Icon name="plus" size={12} />
+                    {t("新建")}
+                  </button>
+                </div>
+                <div className="wb-series-list">
+                  {series.length === 0 ? (
+                    <div className="wb-series-empty">
+                      <span className="wb-series-empty-mark">组</span>
+                      <p>{t("还没有书组。先建一个，再把书放进来。")}</p>
+                    </div>
+                  ) : (
+                    series.map((s) => (
+                      <button
+                        key={s.id}
+                        className={`wb-series-item${s.id === selectedSeriesId ? " on" : ""}`}
+                        onClick={() => setSelectedSeriesId(s.id)}
+                      >
+                        <span>
+                          <b>{s.name}</b>
+                          <small>
+                            {books.filter((b) => b.seriesId === s.id).length} {t("本")}
+                            {s.description ? ` · ${s.description}` : ""}
+                          </small>
+                        </span>
+                        <em>→</em>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </aside>
+
+              <section className="wb-series-main">
+                {!selectedSeries ? (
+                  <div className="wb-series-empty big">
+                    <span className="wb-series-empty-mark big">组</span>
+                    <b>{t("选择一个书组")}</b>
+                    <p>{t("左边会列出所有书组；没有就新建一个。")}</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="wb-series-title">
+                      <div>
+                        <span className="wb-series-eyebrow">{t("书组")}</span>
+                        <h2>{selectedSeries.name}</h2>
+                      </div>
+                      <span className="wb-series-count">
+                        {groupBooks.length} {t("本")} · {seriesChars.filter((c) => c.shared).length} {t("个共享角色")}
+                      </span>
+                    </div>
+
+                    <div className="wb-series-fields">
+                      <label>
+                        <span>{t("书组名")}</span>
+                        <input
+                          value={seriesNameDraft}
+                          onChange={(e) => setSeriesNameDraft(e.target.value)}
+                          maxLength={24}
+                        />
+                      </label>
+                      <label>
+                        <span>{t("一句话简介")}</span>
+                        <textarea
+                          value={seriesDescDraft}
+                          onChange={(e) => setSeriesDescDraft(e.target.value)}
+                          rows={2}
+                          maxLength={120}
+                          placeholder={t("这几本书共同的世界、年代或主线。")}
+                        />
+                      </label>
+                      <div className="wb-series-fields-foot">
+                        <button
+                          className="btn btn-primary btn-sm"
+                          disabled={seriesBusy || !seriesNameDraft.trim()}
+                          onClick={() => void saveSeriesNow()}
+                        >
+                          {t("保存书组信息")}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="wb-series-section">
+                      <h3>
+                        {t("组内的书")} <em>{groupBooks.length}</em>
+                      </h3>
+                      {groupBooks.length === 0 ? (
+                        <p className="wb-series-hint">{t("这个书组还是空的。从下面把书加进来。")}</p>
+                      ) : (
+                        <div className="wb-series-books">
+                          {groupBooks.map((b) => (
+                            <div key={b.path} className="wb-series-book">
+                              <div>
+                                <b>{b.title}</b>
+                                <span>
+                                  {b.kind === "comic"
+                                    ? t("漫画")
+                                    : `${t("文字书")} · ${fmtWords(b.words)} ${t("字")}`}
+                                </span>
+                              </div>
+                              <button disabled={seriesBusy} onClick={() => void assignNow(b, null)}>
+                                {t("移出")}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <select
+                        className="wb-series-add"
+                        value=""
+                        disabled={!seriesCandidates.length || seriesBusy}
+                        onChange={(e) => {
+                          const picked = books.find((b) => b.path === e.target.value);
+                          if (picked) void assignNow(picked, selectedSeries.id);
+                          e.currentTarget.value = "";
+                        }}
+                      >
+                        <option value="">
+                          {seriesCandidates.length ? t("把一本书加入这个书组…") : t("没有可加入的书")}
+                        </option>
+                        {seriesCandidates.map((b) => (
+                          <option key={b.path} value={b.path}>
+                            {b.title}
+                            {b.seriesId && seriesById.get(b.seriesId)
+                              ? ` · 现在在「${seriesById.get(b.seriesId)?.name}」`
+                              : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="wb-series-section">
+                      <h3>
+                        {t("组内角色")} <em>{seriesChars.filter((c) => c.shared).length} / {seriesChars.length}</em>
+                      </h3>
+                      <p className="wb-series-hint">
+                        {t("共享只读的名字、简介和立绘；改角色仍回源书。这里先做最小版，不做关系网。")}
+                      </p>
+                      {seriesBusy && seriesChars.length === 0 ? (
+                        <p className="wb-series-hint">{t("正在读角色…")}</p>
+                      ) : seriesChars.length === 0 ? (
+                        <p className="wb-series-hint">
+                          {t("组内的书还没有人物卡。去书的「设定 / 人物」里建一个，再回来。")}
+                        </p>
+                      ) : (
+                        <div className="wb-series-chars">
+                          {seriesChars.map((c) => (
+                            <div
+                              key={`${c.bookId}-${c.entryId}`}
+                              className={`wb-series-char${c.shared ? " on" : ""}`}
+                            >
+                              <div className="wb-series-avatar">
+                                {c.portrait ? (
+                                  <img src={c.portrait} alt={c.name} loading="lazy" />
+                                ) : (
+                                  <span>{c.name.slice(0, 1)}</span>
+                                )}
+                              </div>
+                              <div className="wb-series-char-copy">
+                                <b>{c.name}</b>
+                                <span>{c.bookTitle}</span>
+                                <small>
+                                  {c.fields
+                                    .slice(0, 2)
+                                    .map((f) => `${f.k}：${f.v}`)
+                                    .join(" · ") || c.note || t("还没有简介")}
+                                </small>
+                              </div>
+                              <button
+                                className={`wb-series-share${c.shared ? " on" : ""}`}
+                                disabled={seriesBusy}
+                                onClick={() => void toggleShared(c)}
+                              >
+                                {c.shared ? t("共享中") : t("共享")}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="wb-series-danger">
+                      {seriesDeleteArmed ? (
+                        <div className="wb-series-confirm">
+                          <span>{t("解散书组？书不会删，只会解除关联。")}</span>
+                          <button onClick={() => setSeriesDeleteArmed(false)}>{t("取消")}</button>
+                          <button className="danger" disabled={seriesBusy} onClick={() => void deleteSeriesNow()}>
+                            {t("确认解散")}
+                          </button>
+                        </div>
+                      ) : (
+                        <button className="wb-series-danger-btn" onClick={() => setSeriesDeleteArmed(true)}>
+                          {t("解散这个书组")}
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+                {seriesError && <p className="wb-series-error">{seriesError}</p>}
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
 
       {stageOpen && current && (
         <BookStage

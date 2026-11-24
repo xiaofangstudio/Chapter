@@ -168,8 +168,10 @@ export function NewBookDialog({
     target: number,
     goal: number,
     template: "blank" | "three",
+    kind: "novel" | "comic",
   ) => void;
 }) {
+  const [kind, setKind] = useState<"novel" | "comic">("novel");
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState("");
   const [target, setTarget] = useState(200000);
@@ -191,7 +193,7 @@ export function NewBookDialog({
 
   const create = () => {
     if (!title.trim()) return;
-    onCreate(title.trim(), author.trim(), target, goal, template);
+    onCreate(title.trim(), author.trim(), target, goal, template, kind);
   };
 
   return (
@@ -207,19 +209,56 @@ export function NewBookDialog({
           </button>
           <button className="btn btn-primary" onClick={create} disabled={!title.trim()}>
             <Icon name="plus" size={14} />
-            {t("创建并开始写")}
+            {kind === "comic" ? t("创建并开始画") : t("创建并开始写")}
           </button>
         </>
       }
     >
+      <div className="booktype-switch">
+        <button className={`booktype-card${kind === "novel" ? " on" : ""}`} onClick={() => setKind("novel")}>
+          <span className="booktype-art">
+            <svg viewBox="0 0 220 130" aria-hidden="true">
+              <path className="bt-paper" d="M12 24c34-9 62-9 98 4v88c-36-13-64-13-98-4z" />
+              <path className="bt-paper" d="M208 24c-34-9-62-9-98 4v88c36-13 64-13 98-4z" />
+              <path className="bt-spine" d="M110 28v88" />
+              <path className="bt-line" d="M32 48c24-5 44-5 62 0M32 62c24-5 44-5 62 0M32 76c18-3 34-3 48 1M146 48c18-3 34-3 48 1M146 62c24-5 44-5 62 0M146 76c24-5 44-5 62 0" />
+            </svg>
+          </span>
+          <span className="booktype-text">
+            <strong>{t("文字书")}</strong>
+            <em>{t("横线纸、章节、正文写作")}</em>
+          </span>
+          <i className="booktype-check">{kind === "novel" ? "✓" : ""}</i>
+        </button>
+        <button className={`booktype-card${kind === "comic" ? " on" : ""}`} onClick={() => setKind("comic")}>
+          <span className="booktype-art comic">
+            <svg viewBox="0 0 220 130" aria-hidden="true">
+              <path className="bt-paper" d="M12 24c34-9 62-9 98 4v88c-36-13-64-13-98-4z" />
+              <path className="bt-paper" d="M208 24c-34-9-62-9-98 4v88c36-13 64-13 98-4z" />
+              <path className="bt-spine" d="M110 28v88" />
+              <rect className="bt-frame" x="28" y="38" width="64" height="30" />
+              <rect className="bt-frame" x="28" y="74" width="64" height="30" />
+              <rect className="bt-frame" x="132" y="38" width="64" height="66" />
+              <path className="bt-pencil" d="M38 56c12-10 24 3 40-5M36 88c18-13 30 4 48-6M142 54c18-14 28 8 44-5M144 82c12-6 24 0 38-9" />
+              <path className="bt-pencil" d="M150 94c10-3 18-3 26 1" />
+            </svg>
+          </span>
+          <span className="booktype-text">
+            <strong>{t("漫画书")}</strong>
+            <em>{t("分格、格内画、气泡与素材")}</em>
+          </span>
+          <i className="booktype-check">{kind === "comic" ? "✓" : ""}</i>
+        </button>
+      </div>
+
       <div className="form-section">
         <div className="field">
-          <label>{t("书名")}</label>
+          <label>{t(kind === "comic" ? "书名 / 漫画名" : "书名")}</label>
           <input
             className="input"
             autoFocus
             value={title}
-            placeholder={t("例如：长夜将尽")}
+            placeholder={t(kind === "comic" ? "例如：方岛夜航" : "例如：长夜将尽")}
             onChange={(e) => setTitle(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") create();
@@ -237,6 +276,20 @@ export function NewBookDialog({
         </div>
       </div>
 
+      {kind === "comic" ? (
+        <div className="form-section comic-spec-card">
+          <div className="form-section-title">{t("页规格")}</div>
+          <div className="comic-spec-row">
+            <span>B5 单页</span>
+            <span>1654 × 2339</span>
+            <span>200 dpi</span>
+          </div>
+          <p>
+            {t("默认六格底，打开即可画。页在左侧页面栏管理。")}
+          </p>
+        </div>
+      ) : (
+      <>
       <div className="form-section">
         <div className="form-section-title">{t("总目标")}</div>
         <div className="goal-chips">
@@ -285,6 +338,8 @@ export function NewBookDialog({
             : t("按「建置 / 对抗 / 解决」铺好三卷九章，章名可随时改。")}
         </div>
       </div>
+      </>
+      )}
     </Modal>
   );
 }

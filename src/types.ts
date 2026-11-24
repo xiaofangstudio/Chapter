@@ -24,6 +24,20 @@ export interface BookMeta {
   coverMode?: "custom" | "default";
   /** 默认封面模板 id，见 lib/coverLibrary.ts。 */
   coverStyle?: string;
+  /** 书本类型；旧工程没有这个字段，一律按小说处理。 */
+  kind?: "novel" | "comic";
+  /** 漫画页规格，只有 kind=comic 时存在。 */
+  comic?: {
+    format: string;
+    pageWidth: number;
+    pageHeight: number;
+    dpi: number;
+    colorMode: string;
+    readingDirection: string;
+    defaultTemplate?: string;
+  };
+  /** 最小书组：同一世界观下的书共用这个 id。 */
+  seriesId?: string;
 }
 
 export interface Scene {
@@ -39,6 +53,8 @@ export interface Chapter {
   scenes: Scene[];
   words: number;
   updatedAt: number;
+  /** 章内编辑器类型；旧章节没有这个字段，按所在书的 kind 决定。 */
+  kind?: "novel" | "comic";
 }
 
 export interface Volume {
@@ -113,6 +129,29 @@ export interface BookSummary {
   spineColor?: string | null;
   coverMode?: "custom" | "default" | null;
   coverStyle?: string | null;
+  kind?: "novel" | "comic" | null;
+  seriesId?: string | null;
+}
+
+export interface SeriesMeta {
+  id: string;
+  name: string;
+  description?: string;
+  bookIds: string[];
+  sharedCharacters?: { bookId: string; entryId: string }[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SeriesCharacter {
+  bookId: string;
+  bookTitle: string;
+  entryId: string;
+  name: string;
+  note: string;
+  portrait: string | null;
+  fields: { k: string; v: string }[];
+  shared: boolean;
 }
 
 export interface RawProject {
@@ -149,6 +188,112 @@ export interface McpStatus {
   running: boolean;
   port: number;
   endpoint: string;
+  error: string | null;
+}
+
+export interface SyncFile {
+  path: string;
+  kind: string;
+  size: number;
+  mtime: number;
+  hash: string;
+}
+
+export interface SyncManifest {
+  version: number;
+  bookId: string;
+  title: string;
+  author: string;
+  updatedAt: number;
+  chapterCount: number;
+  totalBytes: number;
+  files: SyncFile[];
+}
+
+export interface TransferDevice {
+  name: string;
+  platform: string;
+  model: string;
+  appVersion: string;
+  lastSeenAt: number;
+  manifest: SyncManifest | null;
+}
+
+export interface TransferItem {
+  path: string;
+  kind: string;
+  state: "pcNewer" | "phoneNewer" | "pcOnly" | "phoneOnly" | "conflict";
+  pcSize: number;
+  phoneSize: number;
+  pcMtime: number;
+  phoneMtime: number;
+}
+
+export interface TransferComparison {
+  pcFiles: number;
+  phoneFiles: number;
+  pcBytes: number;
+  phoneBytes: number;
+  same: number;
+  pcOnly: number;
+  phoneOnly: number;
+  pcNewer: number;
+  phoneNewer: number;
+  conflicts: number;
+  changedPcToPhone: number;
+  changedPhoneToPc: number;
+  changedBytesPcToPhone: number;
+  changedBytesPhoneToPc: number;
+  suggestedDirection: "pc_to_phone" | "phone_to_pc";
+  confidence: string;
+  items: TransferItem[];
+}
+
+export interface TransferProgress {
+  bytesDone: number;
+  totalBytes: number;
+  percent: number;
+  speed: number;
+  currentFile: string;
+  filesDone: number;
+  filesTotal: number;
+  startedAt: number;
+}
+
+export interface TransferBookBrief {
+  path: string | null;
+  id: string;
+  title: string;
+  author: string;
+  chapters: number;
+  bytes: number;
+  updatedAt: number;
+  empty: boolean;
+}
+
+export type TransferPhase =
+  | "waiting"
+  | "ready"
+  | "preparing"
+  | "transferring"
+  | "applying"
+  | "done"
+  | "error"
+  | "cancelled";
+
+export interface TransferSnapshot {
+  id: string;
+  phase: TransferPhase;
+  url: string;
+  host: string;
+  port: number;
+  expiresAt: number;
+  book: TransferBookBrief | null;
+  device: TransferDevice | null;
+  direction: "pc_to_phone" | "phone_to_pc";
+  comparison: TransferComparison | null;
+  progress: TransferProgress;
+  canConfirm: boolean;
   error: string | null;
 }
 

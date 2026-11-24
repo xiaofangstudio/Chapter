@@ -29,6 +29,7 @@ export function BookIntroPage(props: Props) {
     [outline],
   );
   const total = useMemo(() => flat.reduce((n, c) => n + (c.words ?? 0), 0), [flat]);
+  const comic = meta.kind === "comic";
   const volumeOfActive =
     outline.volumes.find((v) => v.chapters.some((c) => c.id === activeId))?.id ??
     outline.volumes[0]?.id ??
@@ -97,11 +98,11 @@ export function BookIntroPage(props: Props) {
 
           <div className="intro-info">
             <div className="intro-kicker">
-              <span>NOVEL</span>
+              <span>{comic ? "COMIC" : "NOVEL"}</span>
               <i />
               <span>{outline.volumes.length} {t("卷")}</span>
               <i />
-              <span>{flat.length} {t("章")}</span>
+              <span>{flat.length} {comic ? t("话") : t("章")}</span>
             </div>
             <h1>{meta.title || t("未命名")}</h1>
             <p className="intro-byline">
@@ -119,7 +120,7 @@ export function BookIntroPage(props: Props) {
               </span>
               <span>
                 <b>{flat.length}</b>
-                {t("章")}
+                {comic ? t("话") : t("章")}
               </span>
               <span>
                 <b>{outline.volumes.length}</b>
@@ -136,8 +137,14 @@ export function BookIntroPage(props: Props) {
                 disabled={!resumeId}
                 onClick={() => resumeId && props.onSelectChapter(resumeId)}
               >
-                <Icon name="edit" size={16} />
-                {activeId ? t("继续写") : t("开始写")}
+                <Icon name={comic ? "image" : "edit"} size={16} />
+                {comic
+                  ? activeId
+                    ? t("继续画")
+                    : t("开始画")
+                  : activeId
+                    ? t("继续写")
+                    : t("开始写")}
               </button>
               <button className="btn btn-outline btn-lg" onClick={props.onBookSettings}>
                 <Icon name="edit" size={15} />

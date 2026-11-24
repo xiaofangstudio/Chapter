@@ -17,6 +17,8 @@ use tauri::Emitter;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
+mod sync;
+
 const BOOK_FILE: &str = "book.json";
 const OUTLINE_FILE: &str = "outline.json";
 const LORE_FILE: &str = "lore.json";
@@ -351,6 +353,8 @@ struct BookSummary {
     spine_color: Option<String>,
     cover_style: Option<String>,
     cover_mode: Option<String>,
+    kind: Option<String>,
+    series_id: Option<String>,
 }
 
 fn summarize_book(dir: &Path) -> Option<BookSummary> {
@@ -380,6 +384,11 @@ fn summarize_book(dir: &Path) -> Option<BookSummary> {
         .map(|s| s.to_string());
     let cover_mode = book
         .get("coverMode")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let kind = book.get("kind").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let series_id = book
+        .get("seriesId")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
     let cover = book.get("cover").and_then(|v| v.as_str()).map(|rel| {
@@ -413,6 +422,8 @@ fn summarize_book(dir: &Path) -> Option<BookSummary> {
         spine_color,
         cover_style,
         cover_mode,
+        kind,
+        series_id,
     })
 }
 
@@ -457,12 +468,668 @@ fn list_books() -> Result<Vec<BookSummary>, String> {
     Ok(books)
 }
 
+// ───────────────────────── 最小书组 ─────────────────────────
+
+const SERIES_DIR: &str = "series";
+const SERIES_FILE: &str = "series.json";
+
+fn series_root(lib: &Path) -> PathBuf {
+    lib.join(SERIES_DIR)
+}
+
+fn read_series(lib: &Path, id: &str) -> Value {
+    if !safe_file_id(id) {
+        return Value::Null;
+    }
+    read_json_value(&series_root(lib).join(id).join(SERIES_FILE))
+}
+
+fn refresh_series_book_ids(lib: &Path) -> Result<(), String> {
+    let books = list_books()?;
+    let root = series_root(lib);
+    if !root.is_dir() {
+        return Ok(());
+    }
+    let entries = match fs::read_dir(&root) {
+        Ok(v) => v,
+        Err(_) => return Ok(()),
+    };
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        let id = match dir.file_name().and_then(|n| n.to_str()) {
+            Some(v) if safe_file_id(v) => v.to_string(),
+            _ => continue,
+        };
+        let mut series = read_series(lib, &id);
+        if series.is_null() {
+            continue;
+        }
+        let ids: Vec<String> = books
+            .iter()
+            .filter(|b| b.series_id.as_deref() == Some(id.as_str()))
+            .map(|b| b.id.clone())
+            .collect();
+        series["bookIds"] = json!(ids);
+        write_json(&dir.join(SERIES_FILE), &serde_json::to_string(&series).unwrap())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn list_series() -> Result<Vec<Value>, String> {
+    let lib = load_library();
+    ensure_dir(&lib)?;
+    let root = series_root(&lib);
+    ensure_dir(&root)?;
+    let books = list_books()?;
+    let mut out = Vec::new();
+    if let Ok(entries) = fs::read_dir(&root) {
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let id = match dir.file_name().and_then(|n| n.to_str()) {
+                Some(v) if safe_file_id(v) => v.to_string(),
+                _ => continue,
+            };
+            let mut series = read_series(&lib, &id);
+            if series.is_null() {
+                continue;
+            }
+            let ids: Vec<String> = books
+                .iter()
+                .filter(|b| b.series_id.as_deref() == Some(id.as_str()))
+                .map(|b| b.id.clone())
+                .collect();
+            series["id"] = json!(id);
+            series["bookIds"] = json!(ids);
+            out.push(series);
+        }
+    }
+    out.sort_by(|a, b| {
+        let at = a.get("updatedAt").and_then(|v| v.as_i64()).unwrap_or(0);
+        let bt = b.get("updatedAt").and_then(|v| v.as_i64()).unwrap_or(0);
+        bt.cmp(&at)
+    });
+    Ok(out)
+}
+
+#[tauri::command]
+fn create_series(name: String, description: Option<String>) -> Result<Value, String> {
+    let clean = name.trim();
+    if clean.is_empty() {
+        return Err("书组名不能为空".into());
+    }
+    let lib = load_library();
+    ensure_dir(&lib)?;
+    let ms = now_ms();
+    let id = format!("s_{ms}");
+    let dir = series_root(&lib).join(&id);
+    ensure_dir(&dir)?;
+    let series = json!({
+        "id": id,
+        "name": clean,
+        "description": description.unwrap_or_default().trim(),
+        "bookIds": [],
+        "sharedCharacters": [],
+        "createdAt": ms,
+        "updatedAt": ms
+    });
+    write_json(&dir.join(SERIES_FILE), &serde_json::to_string(&series).unwrap())?;
+    Ok(series)
+}
+
+#[tauri::command]
+fn update_series(id: String, name: String, description: Option<String>) -> Result<Value, String> {
+    let clean = name.trim();
+    if clean.is_empty() {
+        return Err("书组名不能为空".into());
+    }
+    let lib = load_library();
+    let mut series = read_series(&lib, &id);
+    if series.is_null() {
+        return Err("书组不存在".into());
+    }
+    series["name"] = json!(clean);
+    series["description"] = json!(description.unwrap_or_default().trim());
+    series["updatedAt"] = json!(now_ms());
+    write_json(
+        &series_root(&lib).join(&id).join(SERIES_FILE),
+        &serde_json::to_string(&series).unwrap(),
+    )?;
+    Ok(series)
+}
+
+#[tauri::command]
+fn delete_series(id: String) -> Result<(), String> {
+    let lib = load_library();
+    if read_series(&lib, &id).is_null() {
+        return Err("书组不存在".into());
+    }
+    // 只解除关联，书本身一本都不动。
+    let books = list_books()?;
+    for book in books.iter().filter(|b| b.series_id.as_deref() == Some(id.as_str())) {
+        let dir = PathBuf::from(&book.path);
+        let mut meta = read_json_value(&dir.join(BOOK_FILE));
+        if meta.is_null() {
+            continue;
+        }
+        if let Some(obj) = meta.as_object_mut() {
+            obj.remove("seriesId");
+        }
+        write_json(&dir.join(BOOK_FILE), &serde_json::to_string(&meta).unwrap())?;
+    }
+    let from = series_root(&lib).join(&id);
+    let trash = lib.join(".trash").join("series");
+    ensure_dir(&trash)?;
+    let to = trash.join(format!("{id}-{}", now_ms()));
+    let _ = fs::rename(&from, &to);
+    Ok(())
+}
+
+#[tauri::command]
+fn assign_book_series(path: String, series_id: Option<String>) -> Result<Value, String> {
+    let lib = load_library();
+    let dir = PathBuf::from(&path);
+    ensure_project(&dir)?;
+    let mut meta = read_json_value(&dir.join(BOOK_FILE));
+    if meta.is_null() {
+        return Err("书不存在".into());
+    }
+    match series_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(sid) => {
+            if read_series(&lib, sid).is_null() {
+                return Err("书组不存在".into());
+            }
+            meta["seriesId"] = json!(sid);
+        }
+        None => {
+            if let Some(obj) = meta.as_object_mut() {
+                obj.remove("seriesId");
+            }
+        }
+    }
+    meta["updatedAt"] = json!(now_ms());
+    write_json(&dir.join(BOOK_FILE), &serde_json::to_string(&meta).unwrap())?;
+    refresh_series_book_ids(&lib)?;
+    Ok(meta)
+}
+
+#[tauri::command]
+fn series_characters(series_id: String) -> Result<Vec<Value>, String> {
+    let lib = load_library();
+    let series = read_series(&lib, &series_id);
+    if series.is_null() {
+        return Err("书组不存在".into());
+    }
+    let shared = series
+        .get("sharedCharacters")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let books = list_books()?;
+    let mut out = Vec::new();
+    for book in books
+        .iter()
+        .filter(|b| b.series_id.as_deref() == Some(series_id.as_str()))
+    {
+        let dir = PathBuf::from(&book.path);
+        let lore = read_json_value(&dir.join(LORE_FILE));
+        let Some(entries) = lore.get("entries").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        for entry in entries {
+            if entry.get("kind").and_then(|v| v.as_str()) != Some("character") {
+                continue;
+            }
+            let eid = entry.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            if eid.is_empty() {
+                continue;
+            }
+            let is_shared = shared.iter().any(|s| {
+                s.get("bookId").and_then(|v| v.as_str()) == Some(book.id.as_str())
+                    && s.get("entryId").and_then(|v| v.as_str()) == Some(eid)
+            });
+            out.push(json!({
+                "bookId": book.id,
+                "bookTitle": book.title,
+                "entryId": eid,
+                "name": entry.get("name").and_then(|v| v.as_str()).unwrap_or("未命名"),
+                "note": entry.get("note").and_then(|v| v.as_str()).unwrap_or(""),
+                "portrait": entry.get("portrait").cloned().unwrap_or(Value::Null),
+                "fields": entry.get("fields").cloned().unwrap_or_else(|| json!([])),
+                "shared": is_shared
+            }));
+        }
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+fn set_series_shared(
+    series_id: String,
+    book_id: String,
+    entry_id: String,
+    shared: bool,
+) -> Result<(), String> {
+    let lib = load_library();
+    let path = series_root(&lib).join(&series_id).join(SERIES_FILE);
+    let mut series = read_series(&lib, &series_id);
+    if series.is_null() {
+        return Err("书组不存在".into());
+    }
+    let mut list = series
+        .get("sharedCharacters")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    list.retain(|s| {
+        !(s.get("bookId").and_then(|v| v.as_str()) == Some(book_id.as_str())
+            && s.get("entryId").and_then(|v| v.as_str()) == Some(entry_id.as_str()))
+    });
+    if shared {
+        list.push(json!({ "bookId": book_id, "entryId": entry_id }));
+    }
+    series["sharedCharacters"] = json!(list);
+    series["updatedAt"] = json!(now_ms());
+    write_json(&path, &serde_json::to_string(&series).unwrap())
+}
+
+// ───────────────────────── 漫画工程 ─────────────────────────
+
+const COMIC_DIR: &str = "comic";
+
+fn safe_file_id(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+fn comic_root(project: &Path) -> PathBuf {
+    project.join(COMIC_DIR)
+}
+
+fn page_dir(project: &Path, page_id: &str) -> Result<PathBuf, String> {
+    if !safe_file_id(page_id) {
+        return Err("页面 id 非法".into());
+    }
+    Ok(comic_root(project).join("pages").join(page_id))
+}
+
+fn decode_data_url(data: &str) -> Result<Vec<u8>, String> {
+    let (_, payload) = data
+        .split_once(',')
+        .ok_or_else(|| "图片数据格式错误".to_string())?;
+    B64.decode(payload.trim())
+        .map_err(|e| format!("图片解码失败：{e}"))
+}
+
+fn data_url_of(mime: &str, bytes: &[u8]) -> String {
+    format!("data:{mime};base64,{}", B64.encode(bytes))
+}
+
+fn mime_from_name(name: &str) -> &'static str {
+    let ext = Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        _ => "image/png",
+    }
+}
+
+fn default_comic_page_json(id: &str, title: &str, ms: i64) -> Value {
+    let width = 1654.0_f64;
+    let height = 2339.0_f64;
+    let margin = 120.0_f64;
+    let gap = 28.0_f64;
+    let fw = (width - margin * 2.0 - gap) / 2.0;
+    let fh = (height - margin * 2.0 - gap * 2.0) / 3.0;
+    let mut frames = Vec::new();
+    for row in 0..3 {
+        for col in 0..2 {
+            let idx = row * 2 + col + 1;
+            frames.push(json!({
+                "id": format!("f_{idx}"),
+                "x": margin + col as f64 * (fw + gap),
+                "y": margin + row as f64 * (fh + gap),
+                "w": fw,
+                "h": fh,
+                "shape": "rect",
+                "rotation": 0.0,
+                "overflow": false,
+                "layers": [{
+                    "id": format!("l_{idx}"),
+                    "name": "线稿",
+                    "kind": "raster",
+                    "visible": true,
+                    "opacity": 1.0,
+                    "locked": false
+                }]
+            }));
+        }
+    }
+    json!({
+        "version": 1,
+        "id": id,
+        "title": title,
+        "width": width,
+        "height": height,
+        "backgroundColor": "#ffffff",
+        "pageFrame": {
+            "x": (width * 0.035).round(),
+            "y": (height * 0.03).round(),
+            "w": (width * 0.93).round(),
+            "h": (height * 0.94).round(),
+            "stroke": 8.0
+        },
+        "frames": frames,
+        "balloons": [],
+        "images": [],
+        "createdAt": ms,
+        "updatedAt": ms
+    })
+}
+
+fn create_comic_project(dir: &Path, ms: i64) -> Result<(), String> {
+    let root = comic_root(dir);
+    ensure_dir(&root.join("pages"))?;
+    let page_id = format!("p_{ms}");
+    let pdir = root.join("pages").join(&page_id);
+    ensure_dir(&pdir.join("layers"))?;
+    ensure_dir(&pdir.join("assets"))?;
+    ensure_dir(&pdir.join("thumbs"))?;
+    let page = default_comic_page_json(&page_id, "第 1 页", ms);
+    write_json(&pdir.join("page.json"), &serde_json::to_string(&page).unwrap())?;
+    let project = json!({
+        "version": 1,
+        "kind": "comic",
+        "title": dir.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "未命名".into()),
+        "format": "b5",
+        "pageWidth": 1654,
+        "pageHeight": 2339,
+        "dpi": 200,
+        "colorMode": "mono",
+        "readingDirection": "ltr",
+        "pages": [{ "id": page_id, "title": "第 1 页", "chapterId": format!("c_{ms}") }],
+        "currentPageId": page_id,
+        "createdAt": ms,
+        "updatedAt": ms
+    });
+    write_json(&root.join("project.json"), &serde_json::to_string(&project).unwrap())
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ComicLayerData {
+    id: String,
+    data_url: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ComicAssetData {
+    path: String,
+    data_url: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ComicPagePayload {
+    json: String,
+    layers: Vec<ComicLayerData>,
+    assets: Vec<ComicAssetData>,
+}
+
+#[tauri::command]
+fn comic_project(path: String) -> Result<String, String> {
+    let dir = PathBuf::from(&path);
+    let root = comic_root(&dir);
+    ensure_dir(&root)?;
+    let file = root.join("project.json");
+    if !file.is_file() {
+        return Err("这本书还没有漫画工程".into());
+    }
+    read_text(&file)
+}
+
+#[tauri::command]
+fn comic_save_project(path: String, json: String) -> Result<(), String> {
+    let dir = PathBuf::from(&path);
+    let root = comic_root(&dir);
+    ensure_dir(&root)?;
+    write_json(&root.join("project.json"), &json)
+}
+
+#[tauri::command]
+fn comic_read_page(path: String, page_id: String) -> Result<ComicPagePayload, String> {
+    let dir = PathBuf::from(&path);
+    let pdir = page_dir(&dir, &page_id)?;
+    let json = read_text(&pdir.join("page.json"))?;
+    let mut layers = Vec::new();
+    if let Ok(entries) = fs::read_dir(pdir.join("layers")) {
+        for entry in entries.flatten() {
+            let file = entry.path();
+            if file.extension().and_then(|e| e.to_str()) != Some("png") {
+                continue;
+            }
+            let id = file
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let meta = fs::metadata(&file).map_err(|e| format!("读取图层失败：{e}"))?;
+            if meta.len() > 32 * 1024 * 1024 {
+                return Err("图层文件过大，无法载入".into());
+            }
+            let bytes = fs::read(&file).map_err(|e| format!("读取图层失败：{e}"))?;
+            layers.push(ComicLayerData {
+                id,
+                data_url: data_url_of("image/png", &bytes),
+            });
+        }
+    }
+    let mut assets = Vec::new();
+    if let Ok(entries) = fs::read_dir(pdir.join("assets")) {
+        for entry in entries.flatten() {
+            let file = entry.path();
+            if !file.is_file() {
+                continue;
+            }
+            let meta = fs::metadata(&file).map_err(|e| format!("读取素材失败：{e}"))?;
+            if meta.len() > 24 * 1024 * 1024 {
+                continue;
+            }
+            let name = file
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let bytes = fs::read(&file).map_err(|e| format!("读取素材失败：{e}"))?;
+            assets.push(ComicAssetData {
+                path: format!("assets/{name}"),
+                data_url: data_url_of(mime_from_name(&name), &bytes),
+            });
+        }
+    }
+    Ok(ComicPagePayload {
+        json,
+        layers,
+        assets,
+    })
+}
+
+#[tauri::command]
+fn comic_save_page(
+    path: String,
+    page_id: String,
+    json: String,
+    layers: Vec<ComicLayerData>,
+) -> Result<(), String> {
+    let dir = PathBuf::from(&path);
+    let pdir = page_dir(&dir, &page_id)?;
+    ensure_dir(&pdir.join("layers"))?;
+    write_json(&pdir.join("page.json"), &json)?;
+    let mut keep = std::collections::HashSet::new();
+    for layer in layers {
+        if !safe_file_id(&layer.id) {
+            return Err("图层 id 非法".into());
+        }
+        let bytes = decode_data_url(&layer.data_url)?;
+        if bytes.len() > 32 * 1024 * 1024 {
+            return Err("单个图层超过 32 MB".into());
+        }
+        write_text(&pdir.join("layers").join(format!("{}.png", layer.id)), "")?;
+        fs::write(pdir.join("layers").join(format!("{}.png", layer.id)), bytes)
+            .map_err(|e| format!("保存图层失败：{e}"))?;
+        keep.insert(layer.id);
+    }
+    if let Ok(entries) = fs::read_dir(pdir.join("layers")) {
+        for entry in entries.flatten() {
+            let file = entry.path();
+            if file.extension().and_then(|e| e.to_str()) != Some("png") {
+                continue;
+            }
+            let id = file
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if !keep.contains(&id) {
+                let _ = fs::remove_file(file);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn comic_save_asset(
+    path: String,
+    page_id: String,
+    name: String,
+    data_url: String,
+) -> Result<String, String> {
+    let dir = PathBuf::from(&path);
+    let pdir = page_dir(&dir, &page_id)?;
+    ensure_dir(&pdir.join("assets"))?;
+    let ext = Path::new(&name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("png")
+        .to_lowercase();
+    let ext = match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "webp" => ext,
+        _ => "png".into(),
+    };
+    let bytes = decode_data_url(&data_url)?;
+    if bytes.len() > 24 * 1024 * 1024 {
+        return Err("单张素材超过 24 MB".into());
+    }
+    let file_name = format!("img_{}.{}", now_ms(), ext);
+    fs::write(pdir.join("assets").join(&file_name), bytes)
+        .map_err(|e| format!("保存素材失败：{e}"))?;
+    Ok(format!("assets/{file_name}"))
+}
+
+#[tauri::command]
+fn comic_save_thumbnail(path: String, page_id: String, data_url: String) -> Result<(), String> {
+    let dir = PathBuf::from(&path);
+    let pdir = page_dir(&dir, &page_id)?;
+    ensure_dir(&pdir.join("thumbs"))?;
+    let bytes = decode_data_url(&data_url)?;
+    fs::write(pdir.join("thumbs").join("page.png"), bytes)
+        .map_err(|e| format!("保存缩略图失败：{e}"))
+}
+
+#[tauri::command]
+fn comic_new_page(
+    path: String,
+    title: String,
+    chapter_id: Option<String>,
+) -> Result<ComicPagePayload, String> {
+    let dir = PathBuf::from(&path);
+    let root = comic_root(&dir);
+    let ms = now_ms();
+    let page_id = format!("p_{ms}");
+    let pdir = root.join("pages").join(&page_id);
+    ensure_dir(&pdir.join("layers"))?;
+    ensure_dir(&pdir.join("assets"))?;
+    ensure_dir(&pdir.join("thumbs"))?;
+    let title = if title.trim().is_empty() {
+        "新页".to_string()
+    } else {
+        title.trim().to_string()
+    };
+    let page = default_comic_page_json(&page_id, &title, ms);
+    write_json(&pdir.join("page.json"), &serde_json::to_string(&page).unwrap())?;
+    let mut project = read_json_value(&root.join("project.json"));
+    if project.is_null() {
+        return Err("漫画工程缺失".into());
+    }
+    if let Some(pages) = project.get_mut("pages").and_then(|v| v.as_array_mut()) {
+        let mut entry = json!({ "id": page_id, "title": title });
+        if let Some(cid) = chapter_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            entry["chapterId"] = json!(cid);
+        }
+        pages.push(entry);
+    }
+    project["currentPageId"] = json!(page_id);
+    project["updatedAt"] = json!(ms);
+    write_json(&root.join("project.json"), &serde_json::to_string(&project).unwrap())?;
+    Ok(ComicPagePayload {
+        json: serde_json::to_string(&page).unwrap(),
+        layers: Vec::new(),
+        assets: Vec::new(),
+    })
+}
+
+#[tauri::command]
+fn comic_delete_page(path: String, page_id: String) -> Result<(), String> {
+    let dir = PathBuf::from(&path);
+    let root = comic_root(&dir);
+    let mut project = read_json_value(&root.join("project.json"));
+    if project.is_null() {
+        return Err("漫画工程缺失".into());
+    }
+    let pages = project
+        .get("pages")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    if pages.len() <= 1 {
+        return Err("至少保留一页".into());
+    }
+    let before = pages.len();
+    let kept: Vec<Value> = pages
+        .into_iter()
+        .filter(|p| p.get("id").and_then(|v| v.as_str()) != Some(page_id.as_str()))
+        .collect();
+    if kept.len() == before {
+        return Err("找不到这一页".into());
+    }
+    project["pages"] = json!(kept);
+    let next_id = project["pages"][0]["id"].as_str().unwrap_or("").to_string();
+    project["currentPageId"] = json!(next_id);
+    project["updatedAt"] = json!(now_ms());
+    write_json(&root.join("project.json"), &serde_json::to_string(&project).unwrap())?;
+    let pdir = page_dir(&dir, &page_id)?;
+    let trash = root.join("trash");
+    ensure_dir(&trash)?;
+    let target = trash.join(format!("{}_{}", page_id, now_ms()));
+    fs::rename(&pdir, &target).map_err(|e| format!("移走页面失败：{e}"))?;
+    Ok(())
+}
+
 #[tauri::command]
 fn create_book(
     title: String,
     author: String,
     target: u64,
     goal: u64,
+    kind: Option<String>,
+    series_id: Option<String>,
 ) -> Result<ProjectPayload, String> {
     let lib = load_library();
     ensure_dir(&lib)?;
@@ -476,7 +1143,9 @@ fn create_book(
     let dir = lib.join(&name);
     ensure_dir(&dir)?;
     let ms = now_ms();
-    let book = json!({
+    let is_comic = kind.as_deref() == Some("comic");
+    let book_kind = if is_comic { "comic" } else { "novel" };
+    let mut book = json!({
         "id": format!("b_{ms}"),
         "title": title.trim(),
         "author": author.trim(),
@@ -487,25 +1156,48 @@ fn create_book(
         "dailyGoal": if goal > 0 { goal } else { 2000 },
         "lastChapterId": Value::Null,
         "daily": Value::Null,
-        "wordCount": 0
+        "wordCount": 0,
+        "kind": book_kind
     });
+    if let Some(sid) = series_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        book["seriesId"] = json!(sid);
+    }
+    if is_comic {
+        book["comic"] = json!({
+            "format": "b5",
+            "pageWidth": 1654,
+            "pageHeight": 2339,
+            "dpi": 200,
+            "colorMode": "mono",
+            "readingDirection": "ltr",
+            "defaultTemplate": "six"
+        });
+    }
     write_json(&dir.join(BOOK_FILE), &serde_json::to_string(&book).unwrap())?;
-    let outline = default_outline();
+    let mut outline = default_outline();
+    if is_comic {
+        outline["volumes"][0]["chapters"][0]["title"] = json!("第一话");
+        outline["volumes"][0]["chapters"][0]["kind"] = json!("comic");
+    }
     write_json(&dir.join(OUTLINE_FILE), &serde_json::to_string(&outline).unwrap())?;
     write_json(&dir.join(LORE_FILE), "{\"entries\":[]}")?;
     ensure_dir(&chapters_dir(&dir))?;
     ensure_dir(&dir.join("snapshots"))?;
     ensure_dir(&dir.join("assets"))?;
-    let cid = outline["volumes"][0]["chapters"][0]["id"]
-        .as_str()
-        .unwrap_or("c_1")
-        .to_string();
-    write_chapter_body(
-        &chapters_dir(&dir).join(format!("{cid}.md")),
-        &cid,
-        "第一章",
-        "",
-    )?;
+    if is_comic {
+        create_comic_project(&dir, ms)?;
+    } else {
+        let cid = outline["volumes"][0]["chapters"][0]["id"]
+            .as_str()
+            .unwrap_or("c_1")
+            .to_string();
+        write_chapter_body(
+            &chapters_dir(&dir).join(format!("{cid}.md")),
+            &cid,
+            "第一章",
+            "",
+        )?;
+    }
     load_project(&dir)
 }
 
@@ -3360,7 +4052,7 @@ fn mcp_exec(app: &tauri::AppHandle, name: &str, args: &Value) -> Result<Value, S
             let author = args.get("author").and_then(|v| v.as_str()).unwrap_or("");
             let target = args.get("target_words").and_then(|v| v.as_u64()).unwrap_or(200000);
             let goal = args.get("daily_goal").and_then(|v| v.as_u64()).unwrap_or(2000);
-            let payload = create_book(title.to_string(), author.to_string(), target, goal)?;
+            let payload = create_book(title.to_string(), author.to_string(), target, goal, None, None)?;
             set_current_project(Some(PathBuf::from(&payload.path)));
             let _ = app.emit("mcp-open-book", json!({ "path": payload.path }));
             let book = read_json_value(&PathBuf::from(&payload.path).join(BOOK_FILE));
@@ -3826,8 +4518,23 @@ pub fn run() {
             get_library,
             set_library,
             list_books,
+            list_series,
+            create_series,
+            update_series,
+            delete_series,
+            assign_book_series,
+            series_characters,
+            set_series_shared,
             create_book,
             open_book,
+            comic_project,
+            comic_save_project,
+            comic_read_page,
+            comic_save_page,
+            comic_save_asset,
+            comic_save_thumbnail,
+            comic_new_page,
+            comic_delete_page,
             save_json,
             save_chapter,
             read_chapter,
@@ -3858,7 +4565,13 @@ pub fn run() {
             git_restore,
             git_branches,
             git_create_branch,
-            git_switch_branch
+            git_switch_branch,
+            sync::transfer_start,
+            sync::transfer_status,
+            sync::transfer_direction,
+            sync::transfer_confirm,
+            sync::transfer_cancel,
+            sync::transfer_close
         ])
         .run(tauri::generate_context!())
         .expect("Chapter 启动失败");

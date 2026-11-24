@@ -1,0 +1,2422 @@
+/* ══════════════════════════════════════════════════════════
+   Chapter · 漫画工作台
+   纸白、墨黑、琥珀选中。桌面三栏；格内聚焦时只留画与工具。
+   ══════════════════════════════════════════════════════════ */
+
+/* ───────── 新建书：小说 / 漫画双视觉卡 ───────── */
+
+.booktype-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.booktype-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 132px;
+  padding: 14px 16px;
+  text-align: left;
+  border: 1.5px solid color-mix(in srgb, var(--text) 11%, transparent);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 252, 246, 0.2)),
+    color-mix(in srgb, var(--surface) 88%, var(--accent) 12%);
+  color: var(--text);
+  transition: border-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out),
+    transform 160ms var(--ease-out);
+  overflow: hidden;
+}
+
+.booktype-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 36%, transparent);
+}
+
+.booktype-card.on {
+  border-color: color-mix(in srgb, var(--accent) 66%, transparent);
+  box-shadow: 0 6px 22px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.booktype-art {
+  flex: 0 0 94px;
+  height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--paper) 92%, var(--accent) 8%);
+}
+
+.booktype-art svg {
+  width: 90px;
+  height: 56px;
+}
+
+.bt-paper {
+  fill: #fffdf9;
+  stroke: #d2c9bb;
+  stroke-width: 1.2;
+}
+
+.bt-spine {
+  stroke: #b9ab99;
+  stroke-width: 1.5;
+}
+
+.bt-line {
+  stroke: #c8beb1;
+  stroke-width: 0.9;
+}
+
+.bt-frame {
+  fill: transparent;
+  stroke: #4b4a4a;
+  stroke-width: 1.4;
+}
+
+.bt-pencil {
+  fill: none;
+  stroke: #c9bdad;
+  stroke-width: 0.8;
+  opacity: 0.9;
+}
+
+.booktype-text {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.booktype-text strong {
+  font-size: 15px;
+  letter-spacing: 0.02em;
+}
+
+.booktype-text em {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.5;
+}
+
+.booktype-check {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-style: normal;
+  font-size: 13px;
+  line-height: 22px;
+  text-align: center;
+  color: #fff;
+  background: var(--accent);
+  opacity: 0;
+  transform: scale(0.7);
+  transition: opacity 160ms var(--ease-out), transform 160ms var(--ease-out);
+}
+
+.booktype-card.on .booktype-check {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.comic-spec-card {
+  padding: 15px 16px;
+  border: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+}
+
+.comic-spec-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0 9px;
+}
+
+.comic-spec-row span {
+  padding: 5px 9px;
+  border-radius: 8px;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: color-mix(in srgb, var(--text) 82%, var(--accent) 18%);
+}
+
+.comic-spec-card p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--text-3);
+}
+
+/* ───────── 工作台骨架 ───────── */
+
+.comic-app {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background:
+    radial-gradient(80% 50% at 20% 0%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%),
+    var(--bg);
+  color: var(--text);
+}
+
+.comic-topbar {
+  flex: 0 0 62px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 18px;
+  border-bottom: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+  background: color-mix(in srgb, var(--bg) 84%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.comic-icon-btn {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--text-2);
+  background: transparent;
+  transition: background 140ms var(--ease-out), color 140ms var(--ease-out);
+}
+
+.comic-icon-btn:hover {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--text);
+}
+
+.comic-icon-btn svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.comic-bookmark {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.comic-bookmark-mark {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(150deg, var(--accent), color-mix(in srgb, var(--accent) 62%, #402410));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.comic-bookmark-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.comic-bookmark-text strong {
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40vw;
+}
+
+.comic-bookmark-text span {
+  font-size: 10.5px;
+  color: var(--text-3);
+  letter-spacing: 0.04em;
+}
+
+.comic-top-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.comic-save-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  color: var(--text-3);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.comic-save-pill i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #7a9b62;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #7a9b62 18%, transparent);
+}
+
+.comic-save-pill.dirty i,
+.comic-save-pill.saving i {
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.comic-save-pill.error i {
+  background: #b85a48;
+}
+
+.comic-text-btn,
+.comic-primary-btn {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 9px;
+  font-size: 12px;
+  color: var(--text-2);
+  transition: background 140ms var(--ease-out), color 140ms var(--ease-out),
+    transform 140ms var(--ease-out);
+}
+
+.comic-text-btn:hover {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--text);
+}
+
+.comic-primary-btn {
+  color: #fff8ee;
+  background: var(--accent);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.comic-primary-btn:hover {
+  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--accent) 88%, #000);
+}
+
+.comic-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) 306px;
+  gap: 0;
+}
+
+.comic-body.focusing {
+  grid-template-columns: minmax(0, 1fr) 306px;
+}
+
+.comic-rail,
+.comic-inspector {
+  min-height: 0;
+  overflow: auto;
+  background: color-mix(in srgb, var(--bg) 82%, var(--surface) 18%);
+}
+
+.comic-rail {
+  border-right: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.comic-inspector {
+  border-left: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.comic-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 12px 9px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--text-3);
+}
+
+.comic-mini-btn {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  font-size: 16px;
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  transition: background 140ms var(--ease-out);
+}
+
+.comic-mini-btn:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text);
+}
+
+.comic-page-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 11px 18px;
+}
+
+.comic-page-card {
+  padding: 6px;
+  border-radius: 11px;
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: left;
+  transition: background 150ms var(--ease-out), border-color 150ms var(--ease-out);
+}
+
+.comic-page-card:hover {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.comic-page-card.active {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.comic-page-thumb {
+  width: 100%;
+  aspect-ratio: 1654 / 2339;
+  max-height: 112px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #fffdf8;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.5) inset,
+    0 4px 10px rgba(60, 40, 20, 0.08);
+}
+
+.comic-page-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.comic-page-mini {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #fffdf8;
+}
+
+.comic-page-mini i {
+  position: absolute;
+  border: 1px solid #8d8478;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.comic-page-mini.empty i {
+  left: 12%;
+  top: 12%;
+  width: 32%;
+  height: 28%;
+}
+
+.comic-page-mini.empty i:nth-child(2) {
+  left: 56%;
+}
+
+.comic-page-mini.empty i:nth-child(3) {
+  left: 12%;
+  top: 50%;
+  width: 76%;
+}
+
+.comic-page-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 3px 1px;
+  min-width: 0;
+}
+
+.comic-page-meta strong {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--accent);
+}
+
+.comic-page-meta span {
+  min-width: 0;
+  font-size: 10.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.comic-page-add {
+  height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 10px;
+  border: 1px dashed color-mix(in srgb, var(--text) 18%, transparent);
+  color: var(--text-3);
+  transition: border-color 150ms var(--ease-out), color 150ms var(--ease-out);
+}
+
+.comic-page-add span {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.comic-page-add em {
+  font-style: normal;
+  font-size: 11px;
+}
+
+.comic-page-add:hover {
+  border-color: color-mix(in srgb, var(--accent) 44%, transparent);
+  color: var(--text);
+}
+
+/* ───────── 画页区 ───────── */
+
+.comic-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(60% 44% at 50% 0%, rgba(255, 246, 228, 0.14), transparent 70%),
+    color-mix(in srgb, var(--bg) 66%, #3a2d21 34%);
+  overflow: hidden;
+}
+
+[data-theme="light"] .comic-stage {
+  background:
+    radial-gradient(60% 44% at 50% 0%, rgba(255, 255, 255, 0.5), transparent 70%),
+    linear-gradient(145deg, #c9bfb1, #b5a999 60%, #a89a88);
+}
+
+.comic-stage-topline {
+  flex: 0 0 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  color: rgba(255, 250, 240, 0.72);
+  font-size: 11px;
+}
+
+[data-theme="light"] .comic-stage-topline {
+  color: #5f5144;
+}
+
+.comic-stage-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.comic-stage-title strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: inherit;
+}
+
+.comic-stage-title span {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.comic-stage-hint {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  opacity: 0.64;
+}
+
+.comic-paper-fit {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: safe center;
+  justify-content: safe center;
+  padding: 12px 36px 62px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.comic-paper-fit.zoomed {
+  align-items: flex-start;
+  justify-content: safe center;
+  padding-bottom: 82px;
+}
+
+.comic-paper-fit.focus {
+  padding: 4px 30px 66px;
+  overflow: hidden;
+}
+
+.comic-paper-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  border-radius: 3px;
+  background: #fff;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 26px 70px rgba(24, 16, 8, 0.36),
+    0 2px 8px rgba(24, 16, 8, 0.22);
+  animation: comic-paper-in 380ms var(--ease-out) both;
+}
+
+@keyframes comic-paper-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.comic-page-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  border-radius: 3px;
+}
+
+.comic-text-edit {
+  position: absolute;
+  z-index: 4;
+  resize: none;
+  border: 1.5px dashed color-mix(in srgb, var(--accent) 60%, transparent);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 253, 248, 0.94);
+  color: #17171c;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  outline: none;
+  box-shadow: 0 8px 24px rgba(40, 26, 14, 0.16);
+}
+
+.comic-focus-head {
+  flex: 0 0 46px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 18px;
+  color: rgba(255, 250, 240, 0.82);
+}
+
+[data-theme="light"] .comic-focus-head {
+  color: #4c4035;
+}
+
+.comic-focus-head > div:not(.comic-zoom) {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.comic-focus-head strong {
+  font-size: 12px;
+}
+
+.comic-focus-head span {
+  font-size: 10px;
+  opacity: 0.65;
+}
+
+.comic-focus-history {
+  display: flex !important;
+  flex-direction: row !important;
+  gap: 4px !important;
+  margin-left: auto;
+}
+
+.comic-focus-history button {
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 7px;
+  background: rgba(20, 16, 12, 0.16);
+  color: inherit;
+  font-size: 10px;
+}
+
+[data-theme="light"] .comic-focus-history button {
+  background: rgba(60, 45, 30, 0.12);
+}
+
+.comic-focus-history button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.comic-focus-history + .comic-zoom {
+  margin-left: 0;
+}
+
+.comic-zoom {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 9px;
+  background: rgba(20, 16, 12, 0.16);
+}
+
+[data-theme="light"] .comic-zoom {
+  background: rgba(60, 45, 30, 0.12);
+}
+
+.comic-zoom button {
+  height: 24px;
+  min-width: 26px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: inherit;
+}
+
+.comic-zoom button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.comic-zoom span {
+  min-width: 42px;
+  text-align: center;
+  font-size: 10px;
+}
+
+.comic-focus-wrap {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.comic-focus-canvas {
+  display: block;
+  background: #fff;
+  border-radius: 2px;
+  touch-action: none;
+  transform-origin: center center;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.7) inset,
+    0 30px 80px rgba(24, 16, 8, 0.38);
+  cursor: crosshair;
+}
+
+/* ───────── 底部工具条 ───────── */
+
+.comic-toolbar {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  z-index: 5;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+  box-shadow: 0 14px 38px rgba(28, 18, 10, 0.24);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.comic-tool {
+  height: 44px;
+  min-width: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  color: var(--text-3);
+  transition: background 140ms var(--ease-out), color 140ms var(--ease-out);
+}
+
+.comic-tool svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.comic-tool:hover {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  color: var(--text-2);
+}
+
+.comic-tool.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.comic-toolbar-sep {
+  width: 1px;
+  height: 30px;
+  margin: 0 4px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.comic-toolbar-colors {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px 0 8px;
+}
+
+/* ───────── 选择二级菜单 ───────── */
+
+.comic-select-menu {
+  position: absolute;
+  left: 50%;
+  bottom: 78px;
+  z-index: 8;
+  transform: translateX(-50%);
+  width: 324px;
+  max-width: calc(100% - 20px);
+  padding: 10px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  box-shadow: 0 18px 48px rgba(28, 18, 10, 0.28);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.comic-select-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 1px 2px 8px;
+}
+
+.comic-select-head strong {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.comic-select-head span {
+  display: block;
+  margin-top: 2px;
+  font-size: 9px;
+  color: var(--text-4);
+}
+
+.comic-select-close {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-3);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.comic-select-modes {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+
+.comic-select-mode {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  padding: 7px 7px 6px;
+  border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+  background: color-mix(in srgb, var(--text) 2.5%, transparent);
+  text-align: left;
+}
+
+.comic-select-mode b {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.comic-select-mode span {
+  font-size: 8.5px;
+  color: var(--text-4);
+  white-space: nowrap;
+}
+
+.comic-select-mode:hover {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.comic-select-mode.active {
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.comic-select-mode.active b {
+  color: var(--accent);
+}
+
+.comic-select-options {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.comic-select-slider {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2px 8px;
+  font-size: 9.5px;
+  color: var(--text-3);
+}
+
+.comic-select-slider strong {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.comic-select-slider input {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 12px;
+  margin: 1px 0 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.comic-select-slider input::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 16%, transparent);
+}
+
+.comic-select-slider input::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.comic-select-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9.5px;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.comic-select-check input {
+  accent-color: var(--accent);
+}
+
+.comic-select-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 9px;
+  color: var(--text-4);
+}
+
+.comic-select-ops {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.comic-select-ops button {
+  height: 24px;
+  padding: 0 9px;
+}
+
+.comic-select-foot button {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  color: var(--text-2);
+  font-size: 9.5px;
+}
+
+.comic-select-foot button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  color: var(--accent);
+}
+
+.comic-select-foot button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.comic-color {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--text) 18%, transparent);
+  transition: transform 120ms var(--ease-out);
+}
+
+.comic-color.active {
+  transform: scale(1.18);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.comic-color-picker {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  padding: 2px;
+  border: 0;
+  background: conic-gradient(
+    #ff6b6b,
+    #ffd166,
+    #7bd88f,
+    #54c9d6,
+    #6c8cff,
+    #c678ff,
+    #ff6b6b
+  );
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 12%, transparent);
+  overflow: visible;
+  cursor: pointer;
+}
+
+.comic-color-dot {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+  transition: transform 120ms var(--ease-out);
+}
+
+.comic-color-picker:hover .comic-color-dot {
+  transform: scale(1.04);
+}
+
+.comic-color-picker input {
+  position: absolute;
+  inset: -4px;
+  width: calc(100% + 8px);
+  height: calc(100% + 8px);
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* ───────── 右侧检查器 ───────── */
+
+.comic-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  padding: 13px 12px 9px;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.comic-tabs button {
+  height: 29px;
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--text-3);
+  transition: background 140ms var(--ease-out), color 140ms var(--ease-out);
+}
+
+.comic-tabs button:hover {
+  color: var(--text-2);
+}
+
+.comic-tabs button.on {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.comic-panel {
+  padding: 4px 12px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.comic-panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 24px;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: var(--text-3);
+}
+
+.comic-color-inline {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 7px 0 4px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  letter-spacing: 0.02em;
+  color: var(--text-2);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.comic-color-inline i {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--text) 18%, transparent);
+}
+
+.comic-color-inline span {
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.comic-color-inline input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.comic-panel-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.comic-studio-btn {
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--accent, #b35a2a) 42%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent, #b35a2a) 10%, transparent);
+  color: var(--accent, #b35a2a);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+
+.comic-studio-btn:hover {
+  background: color-mix(in srgb, var(--accent, #b35a2a) 16%, transparent);
+}
+
+.comic-color-card {
+  padding: 9px 10px 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+  background: color-mix(in srgb, var(--text) 2.5%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.comic-color-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: var(--text-2);
+}
+
+.comic-color-head em {
+  font-style: normal;
+  font-size: 9px;
+  color: var(--text-4);
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.comic-color-self {
+  height: 20px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+  font-size: 9px;
+  color: var(--text-2);
+}
+
+.comic-color-self:hover,
+.comic-color-self.active {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.comic-color-picker-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 7px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.comic-sv {
+  position: relative;
+  width: 100%;
+  height: 92px;
+  border-radius: 7px;
+  cursor: crosshair;
+  touch-action: none;
+  overflow: hidden;
+}
+
+.comic-sv i {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  margin: -5.5px 0 0 -5.5px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45), 0 1px 4px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+.comic-hue {
+  width: 100%;
+  height: 10px;
+  margin: 0;
+  border-radius: 999px;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  background: linear-gradient(
+    to right,
+    #f44,
+    #ff0,
+    #0f4,
+    #0ff,
+    #04f,
+    #f0f,
+    #f44
+  );
+}
+
+.comic-hue::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid rgba(0, 0, 0, 0.35);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.comic-color-readout {
+  display: flex;
+  gap: 5px;
+}
+
+.comic-hex-input {
+  flex: 1;
+  min-width: 0;
+  height: 25px;
+  padding: 0 7px;
+  border-radius: 7px;
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  font: inherit;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  outline: none;
+}
+
+.comic-hex-input:focus {
+  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+}
+
+.comic-color-readout button {
+  height: 25px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.comic-color-readout button:hover {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.comic-color-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: -4px;
+  font-size: 9px;
+  color: var(--text-4);
+}
+
+.comic-color-label em {
+  font-style: normal;
+  font-size: 8.5px;
+  opacity: 0.8;
+}
+
+.comic-palette-grid {
+  padding-top: 1px;
+}
+
+.comic-palette-empty {
+  padding: 6px 7px;
+  border-radius: 7px;
+  border: 1px dashed color-mix(in srgb, var(--text) 14%, transparent);
+  font-size: 9px;
+  line-height: 1.45;
+  color: var(--text-4);
+}
+
+.comic-swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 5px;
+}
+
+.comic-swatch {
+  aspect-ratio: 1;
+  width: 100%;
+  min-width: 0;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--text) 16%, transparent);
+  padding: 0;
+  cursor: pointer;
+}
+
+.comic-swatch:hover {
+  transform: translateY(-1px);
+}
+
+.comic-swatch.active {
+  outline: 2px solid var(--accent, #b35a2a);
+  outline-offset: 1px;
+}
+
+.comic-color-recent {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-top: 7px;
+  border-top: 1px dashed color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.comic-color-recent > span {
+  font-size: 9px;
+  color: var(--text-4);
+  margin-right: 2px;
+  white-space: nowrap;
+}
+
+.comic-color-recent .comic-swatch {
+  width: 18px;
+  flex: 0 0 18px;
+  aspect-ratio: 1;
+}
+
+.comic-layer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.comic-layer-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  padding: 5px 6px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 130ms var(--ease-out), border-color 130ms var(--ease-out);
+}
+
+.comic-layer-row:hover {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.comic-layer-row.active {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+.comic-eye {
+  flex: 0 0 18px;
+  height: 18px;
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.comic-eye.on {
+  color: var(--text-2);
+}
+
+.comic-layer-thumb {
+  flex: 0 0 32px;
+  height: 32px;
+  border-radius: 5px;
+  overflow: hidden;
+  background:
+    linear-gradient(45deg, rgba(0, 0, 0, 0.045) 25%, transparent 25%) 0 0 / 8px 8px,
+    #fffdf8;
+  border: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+}
+
+.comic-layer-dot {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.comic-layer-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.comic-layer-name strong {
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.comic-layer-name span {
+  font-size: 9px;
+  color: var(--text-3);
+}
+
+.comic-row-menu {
+  flex: 0 0 22px;
+  height: 22px;
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--text-3);
+}
+
+.comic-row-menu:hover {
+  background: color-mix(in srgb, #b85a48 14%, transparent);
+  color: #b85a48;
+}
+
+.comic-opacity,
+.comic-slider {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 3px 8px;
+  padding: 3px 2px;
+  font-size: 10.5px;
+  color: var(--text-3);
+}
+
+.comic-opacity strong,
+.comic-slider strong {
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.comic-opacity input,
+.comic-slider input {
+  grid-column: 1 / -1;
+  width: 100%;
+  height: 3px;
+  accent-color: var(--accent);
+}
+
+.comic-layer-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.comic-layer-actions button,
+.comic-wide-btn,
+.comic-template-foot button,
+.comic-confirm-actions button {
+  height: 30px;
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  transition: background 140ms var(--ease-out), color 140ms var(--ease-out);
+}
+
+.comic-layer-actions button:hover,
+.comic-wide-btn:hover,
+.comic-template-foot button:hover,
+.comic-confirm-actions button:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+}
+
+.comic-wide-btn.danger,
+.comic-confirm-actions .danger {
+  color: #a64a3b;
+}
+
+.comic-wide-btn.danger:hover,
+.comic-confirm-actions .danger:hover {
+  background: color-mix(in srgb, #b85a48 12%, transparent);
+}
+
+.comic-sep {
+  height: 1px;
+  margin: 5px 0;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.comic-presets {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 3px;
+}
+
+.comic-preset {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 2px 6px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  font-size: 9px;
+  color: var(--text-3);
+  transition: background 130ms var(--ease-out), border-color 130ms var(--ease-out);
+}
+
+.comic-preset-thumb {
+  display: block;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, #edebe7 25%, transparent 25%),
+    linear-gradient(-45deg, #edebe7 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #edebe7 75%),
+    linear-gradient(-45deg, transparent 75%, #edebe7 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.comic-preset-thumb {
+  transition: box-shadow 130ms var(--ease-out);
+}
+
+.comic-preset:hover {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.comic-preset.active {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+  color: var(--accent);
+}
+
+.comic-preset.active .comic-preset-thumb {
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--text) 10%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.comic-brush-note,
+.comic-drop-hint {
+  padding: 9px 10px;
+  border-radius: 9px;
+  font-size: 10px;
+  line-height: 1.65;
+  color: var(--text-3);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.comic-brush-selects {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+}
+
+.comic-brush-selects label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  font-size: 9.5px;
+  color: var(--text-3);
+}
+
+.comic-brush-selects select {
+  width: 100%;
+  height: 26px;
+  padding: 0 5px;
+  border-radius: 7px;
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  font-size: 10px;
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+}
+
+.comic-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.comic-field span {
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.comic-field input,
+.comic-field select,
+.comic-asset-controls select {
+  height: 29px;
+  min-width: 0;
+  padding: 0 8px;
+  border-radius: 7px;
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  color: var(--text);
+  font-size: 11px;
+  outline: none;
+}
+
+.comic-field input:focus,
+.comic-field select:focus {
+  border-color: color-mix(in srgb, var(--accent) 44%, transparent);
+}
+
+.comic-page-facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.comic-page-facts > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.comic-page-facts span {
+  font-size: 9px;
+  color: var(--text-3);
+}
+
+.comic-page-facts strong {
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.comic-grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.comic-toggle-row {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.comic-toggle {
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 7px;
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  font-size: 10.5px;
+  color: var(--text-3);
+  transition: all 130ms var(--ease-out);
+}
+
+.comic-toggle:hover {
+  color: var(--text-2);
+  border-color: color-mix(in srgb, var(--text) 20%, transparent);
+}
+
+.comic-toggle.on {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.comic-toggle.danger {
+  color: #a64a3b;
+}
+
+.comic-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 18px 12px;
+  border-radius: 10px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-3);
+  background: color-mix(in srgb, var(--text) 3.5%, transparent);
+}
+
+.comic-empty button {
+  align-self: flex-start;
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 7px;
+  font-size: 10.5px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.comic-empty span {
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+.comic-asset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.comic-asset-row {
+  display: grid;
+  grid-template-columns: 38px 1fr 22px;
+  gap: 5px 7px;
+  align-items: center;
+  padding: 6px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.comic-asset-thumb {
+  width: 38px;
+  height: 38px;
+  border-radius: 6px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: var(--text-3);
+  background: #fffdf8;
+}
+
+.comic-asset-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.comic-asset-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.comic-asset-meta strong {
+  font-size: 10.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.comic-asset-meta span {
+  font-size: 9px;
+  color: var(--text-3);
+}
+
+.comic-asset-controls {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 5px;
+}
+
+.comic-asset-controls select {
+  flex: 1;
+  height: 26px;
+  font-size: 10px;
+}
+
+.comic-asset-controls .comic-toggle {
+  height: 26px;
+}
+
+/* ───────── 底部状态 ───────── */
+
+.comic-status {
+  flex: 0 0 26px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 18px;
+  border-top: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+  font-size: 10px;
+  color: var(--text-3);
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+}
+
+.comic-status em {
+  font-style: normal;
+  color: var(--accent);
+}
+
+/* ───────── 弹层：模板 / 删除确认 ───────── */
+
+.comic-modal-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(24, 18, 12, 0.42);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+  animation: comic-fade 160ms var(--ease-out) both;
+}
+
+@keyframes comic-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.comic-modal {
+  width: min(720px, 92vw);
+  max-height: 86vh;
+  overflow: auto;
+  padding: 18px;
+  border-radius: 18px;
+  background: var(--surface);
+  box-shadow: 0 30px 90px rgba(20, 14, 8, 0.36);
+  animation: comic-modal-in 220ms var(--ease-out) both;
+}
+
+.comic-modal.small {
+  width: min(380px, 90vw);
+}
+
+@keyframes comic-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.comic-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.comic-modal-head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.comic-modal-head strong {
+  font-size: 15px;
+  letter-spacing: 0.02em;
+}
+
+.comic-modal-head span {
+  font-size: 11px;
+  color: var(--text-3);
+  line-height: 1.6;
+}
+
+.comic-template-impact {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 11px;
+  border: 1px solid color-mix(in srgb, #a64a3b 24%, transparent);
+  background: color-mix(in srgb, #a64a3b 7%, transparent);
+}
+
+.comic-template-impact p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+.comic-template-impact div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.comic-template-impact button {
+  height: 30px;
+  padding: 0 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--text-2);
+  background: var(--surface);
+}
+
+.comic-template-impact button:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+}
+
+.comic-template-impact button.danger {
+  color: #fff8f5;
+  background: #a64a3b;
+}
+
+.comic-template-impact button.danger:hover {
+  background: #8f3c2f;
+  color: #fff;
+}
+
+.comic-template-group {
+  margin-top: 10px;
+}
+
+.comic-custom-block {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--line, #d8d4cc);
+}
+
+.comic-menu-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+}
+
+.comic-card-menu {
+  position: fixed;
+  min-width: 156px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--line, #d8d4cc);
+  background: var(--surface, #fff);
+  box-shadow: 0 12px 36px rgba(23, 23, 28, .18);
+}
+
+.comic-card-menu button {
+  width: 100%;
+  border: 0;
+  border-radius: 7px;
+  padding: 9px 10px;
+  text-align: left;
+  background: transparent;
+  color: #b23b2e;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.comic-card-menu button:hover {
+  background: rgba(178, 59, 46, .09);
+}
+
+.comic-template-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin-bottom: 5px;
+  padding: 0 1px;
+}
+
+.comic-template-group-head b {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--text);
+}
+
+.comic-template-group-head span {
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.comic-template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 8px;
+}
+
+.comic-template-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 180px;
+  padding: 8px;
+  border-radius: 11px;
+  border: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+  text-align: left;
+  transition: border-color 140ms var(--ease-out), background 140ms var(--ease-out);
+}
+
+.comic-template-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.comic-template-card strong {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.comic-template-card span {
+  font-size: 9.5px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+.comic-template-mini {
+  position: relative;
+  width: auto;
+  height: 108px;
+  max-width: 100%;
+  aspect-ratio: 1654 / 2339;
+  margin: 0 auto;
+  border-radius: 5px;
+  background: #fffdf8;
+  border: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+  overflow: hidden;
+}
+
+.comic-template-mini svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.comic-template-mini path {
+  fill: rgba(93, 87, 80, 0.035);
+  stroke: #5d5750;
+  stroke-width: 1.25;
+  vector-effect: non-scaling-stroke;
+}
+
+.comic-template-modal {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.comic-template-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+  margin-right: -4px;
+}
+
+.comic-template-foot {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  margin: 10px -18px -18px;
+  padding: 12px 18px 18px;
+  border-top: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+  background: var(--surface);
+}
+
+.comic-template-foot button {
+  padding: 0 12px;
+}
+
+.comic-template-foot .comic-template-draw {
+  color: #7d3f0f;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.comic-template-foot .comic-template-draw:hover {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: #6b3409;
+}
+
+.comic-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.comic-confirm-actions button {
+  padding: 0 16px;
+}
+
+/* ───────── 窄窗口 ───────── */
+
+@media (max-width: 1120px) {
+  .comic-body {
+    grid-template-columns: 122px minmax(0, 1fr) 268px;
+  }
+  .comic-body.focusing {
+    grid-template-columns: minmax(0, 1fr) 268px;
+  }
+  .comic-toolbar {
+    max-width: calc(100% - 18px);
+    flex-wrap: wrap;
+    justify-content: center;
+    row-gap: 4px;
+  }
+  .comic-tool span {
+    display: none;
+  }
+  .comic-tool {
+    min-width: 38px;
+    height: 42px;
+  }
+  .comic-select-menu {
+    bottom: 126px;
+  }
+  .comic-toolbar-colors {
+    padding: 0 2px 0 4px;
+  }
+  .comic-bookmark-text span {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .comic-body {
+    grid-template-columns: minmax(0, 1fr) 240px;
+  }
+  .comic-body.focusing {
+    grid-template-columns: minmax(0, 1fr) 240px;
+  }
+  .comic-pages {
+    display: none;
+  }
+  .booktype-switch {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+/* 手绘分格提示 */
+.comic-draft-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  padding: 6px 13px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  color: #7d3f0f;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  box-shadow: 0 6px 18px rgba(60, 45, 25, 0.12);
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 4;
+}
+
+/* ───────── 整页外框 / 磁吸 / 自定义预设 ───────── */
+
+.comic-stage-hint {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.comic-magnet {
+  height: 23px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  color: var(--text-3);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.comic-magnet.on {
+  color: #7d3f0f;
+  border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.comic-preset-card {
+  position: relative;
+}
+
+.comic-preset-del {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 12px;
+  color: var(--text-3);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  opacity: 0;
+  transition: opacity 140ms var(--ease-out);
+}
+
+.comic-preset-card:hover .comic-preset-del {
+  opacity: 1;
+}
+
+.comic-preset-del:hover {
+  color: #a64a3b;
+  border-color: color-mix(in srgb, #b85a48 45%, transparent);
+}
+
+.comic-preset-form {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.comic-preset-form input {
+  height: 38px;
+  padding: 0 12px;
+  border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.comic-preset-form input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.comic-preset-form p {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--text-3);
+}
+
+.comic-confirm-actions button.primary {
+  color: #6b3409;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.comic-confirm-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.comic-stage-flag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: #7d3f0f;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  font-size: 9.5px;
+}
+
+/* 嵌进书壳的漫画编辑器：只保留画布与绘画面板，外层顶栏/侧栏/信息栏沿用小说 */
+.comic-app.embedded {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: transparent;
+}
+
+.comic-app.embedded .comic-body {
+  border-radius: 0;
+}
+
+.comic-stage-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.comic-stage-actions button {
+  height: 25px;
+  padding: 0 9px;
+  border-radius: 7px;
+  font-size: 10.5px;
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.comic-stage-actions button:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.comic-canvas-zoom {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  height: 25px;
+  padding: 2px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+.comic-canvas-zoom button {
+  height: 21px;
+  min-width: 22px;
+  padding: 0 4px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1;
+  background: transparent;
+}
+
+.comic-canvas-zoom .comic-zoom-value {
+  min-width: 40px;
+  font-size: 9.5px;
+  opacity: 0.78;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1280px) {
+  .comic-app.embedded .comic-body {
+    grid-template-columns: 122px minmax(0, 1fr) 258px;
+  }
+  .comic-app.embedded .comic-body.focusing {
+    grid-template-columns: minmax(0, 1fr) 258px;
+  }
+  .comic-stage-hint {
+    display: none;
+  }
+}
+
+.comic-app.embedded .comic-stage-hint {
+  display: none;
+}
+
+.comic-app.embedded .comic-stage-topline {
+  flex: 0 0 auto;
+  min-height: 42px;
+  gap: 6px 10px;
+  padding: 6px 14px;
+  flex-wrap: wrap;
+}
+
+.comic-app.embedded .comic-stage-title {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.comic-app.embedded .comic-stage-title strong,
+.comic-app.embedded .comic-stage-title span {
+  white-space: nowrap;
+}
+
+.comic-app.embedded .comic-stage-title span {
+  font-size: 9.5px;
+}
+
+.comic-app.embedded .comic-stage-actions {
+  flex-wrap: nowrap;
+  margin-left: auto;
+}
+
+.stage.panel-open .comic-app.embedded .comic-stage-title span {
+  display: none;
+}
+
+.comic-app.embedded .comic-stage-actions .comic-magnet {
+  height: 25px;
+}

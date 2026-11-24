@@ -22,6 +22,7 @@ interface Props {
   onSnapshots: () => void;
   onVersions: () => void;
   onImport: () => void;
+  onTransfer: () => void;
   onBack: () => void;
   onBookSettings: () => void;
   onMatter: () => void;
@@ -47,6 +48,7 @@ export function TopBar(props: Props) {
     onSnapshots,
     onVersions,
     onImport,
+    onTransfer,
     onBack,
     onBookSettings,
     onMatter,
@@ -71,6 +73,7 @@ export function TopBar(props: Props) {
     { label: t("书籍设置…"), icon: "edit", onClick: onBookSettings },
     { label: t("副文本 · Markdown…"), icon: "file", onClick: onMatter },
     { label: t("导入书稿…"), icon: "download", onClick: onImport },
+    { label: t("手机互传…"), icon: "arrow", onClick: onTransfer },
     { label: t("版本与回档"), icon: "clock", onClick: onVersions },
     { label: t("版本历史"), icon: "file", onClick: onSnapshots },
     { label: t("回到书架"), icon: "book", onClick: onBack },
@@ -116,8 +119,8 @@ export function TopBar(props: Props) {
 
       <div className="topbar-center">
         <button className={`seg-btn${view === "write" ? " on" : ""}`} onClick={() => onView("write")}>
-          <Icon name="book" size={14} />
-          {t("写作")}
+          <Icon name={meta.kind === "comic" ? "image" : "book"} size={14} />
+          {meta.kind === "comic" ? t("作画") : t("写作")}
         </button>
         <button
           className={`seg-btn${view === "outline" || view === "bookOutline" ? " on" : ""}`}
@@ -148,6 +151,9 @@ export function TopBar(props: Props) {
       </div>
 
       <div className="topbar-right">
+        <button className="icon-btn" title={t("手机互传")} onClick={onTransfer}>
+          <Icon name="arrow" size={17} />
+        </button>
         <button
           className={`icon-btn${panel ? " on" : ""}`}
           title={panel ? t("收起信息栏") : t("展开信息栏")}
