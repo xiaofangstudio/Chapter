@@ -30,12 +30,12 @@ export function LoreView({ lore, onAdd, onEdit, onDelete, onInsert, onSaveLore, 
     return (
       <div className="view-scroll lore-graph-view">
         <div className="view-inner">
-          <div className="view-head">
+          <div className="view-head lore-head">
             <div>
               <h2>{mapMode ? t("世界观地图") : t("关系图谱")}</h2>
               <p>
                 {mapMode
-                  ? t("上传一张世界观地图，把地点钉在上面；拖动钉子调整位置，右键删除。")
+                  ? t("上传一张世界观地图，把地点钉在上面；拖动钉子调整位置，长按删除。")
                   : t("人物、地点各成一张网；拖动、连线、标色、皇冠和立绘都只保存在这本书里。")}
               </p>
             </div>
@@ -83,7 +83,7 @@ export function LoreView({ lore, onAdd, onEdit, onDelete, onInsert, onSaveLore, 
   return (
     <div className="view-scroll">
       <div className="view-inner">
-        <div className="view-head">
+        <div className="view-head lore-head">
           <div>
             <h2>{t("设定表")}</h2>
             <p>{t("人物、地点、物品，字段随你定。写正文时按下「设定」就能把名字插进去，不怕记混。")}</p>

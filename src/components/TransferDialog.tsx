@@ -73,6 +73,17 @@ function phaseTitle(snap: TransferSnapshot): string {
   return t("互传出错");
 }
 
+function phonePhaseTitle(snap: TransferSnapshot): string {
+  if (snap.phase === "waiting") return t("等待电脑扫码");
+  if (snap.phase === "ready") return t("电脑已连接");
+  if (snap.phase === "preparing") return t("正在准备要传的内容");
+  if (snap.phase === "transferring") return t("正在传输");
+  if (snap.phase === "applying") return t("电脑正在接收书稿");
+  if (snap.phase === "done") return t("已经发到电脑");
+  if (snap.phase === "cancelled") return t("已取消");
+  return t("互传出错");
+}
+
 function countText(c: TransferComparison, direction: "pc_to_phone" | "phone_to_pc") {
   if (direction === "pc_to_phone") {
     return { count: c.changedPcToPhone, bytes: c.changedBytesPcToPhone };
@@ -89,6 +100,7 @@ export function TransferDialog({ bookPath, outline = null, onClose, onApplied }:
   const alive = useRef(true);
   const callbacks = useRef({ onClose, onApplied });
   callbacks.current = { onClose, onApplied };
+  const isPhone = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
 
   useEffect(() => {
     alive.current = true;
@@ -251,8 +263,12 @@ export function TransferDialog({ bookPath, outline = null, onClose, onApplied }:
         <div className="modal-head transfer-head">
           <div>
             <span className="transfer-eyebrow">CHAPTER / LOCAL TRANSFER</span>
-            <h3>{snap ? phaseTitle(snap) : "手机互传"}</h3>
-            <p>同一个 Wi-Fi，书稿不经过云端。先绑定手机，再由电脑确认方向；只传有变化的内容。</p>
+            <h3>{snap ? (isPhone ? phonePhaseTitle(snap) : phaseTitle(snap)) : "手机互传"}</h3>
+            <p>
+              {isPhone
+                ? "同一个 Wi-Fi，用电脑浏览器扫码连上这台手机；先选方向，再只传有变化的内容。"
+                : "同一个 Wi-Fi，书稿不经过云端。先绑定手机，再由电脑确认方向；只传有变化的内容。"}
+            </p>
           </div>
           <button className="icon-btn" onClick={doClose} title={locked ? "传输中不能退出" : "关闭"}>
             <Icon name="close" size={16} />
@@ -268,8 +284,8 @@ export function TransferDialog({ bookPath, outline = null, onClose, onApplied }:
           <>
             <div className="transfer-steps">
               {[
-                ["1", "手机扫码"],
-                ["2", "电脑确认"],
+                ["1", isPhone ? "电脑扫码" : "手机扫码"],
+                ["2", isPhone ? "电脑连接" : "电脑确认"],
                 ["3", "只传变化"],
                 ["4", "真实进度"],
               ].map(([n, label], i) => {
@@ -327,16 +343,24 @@ export function TransferDialog({ bookPath, outline = null, onClose, onApplied }:
                     {qr ? <img src={qr} alt="手机扫码" /> : <div className="transfer-qr-placeholder">生成二维码中…</div>}
                   </div>
                   <div className="transfer-qr-caption">
-                    <b>用手机相机扫这个码</b>
-                    <span>手机和电脑必须在同一个 Wi-Fi。二维码 10 分钟内有效。</span>
+                    <b>{isPhone ? "用电脑浏览器扫这个码" : "用手机相机扫这个码"}</b>
+                    <span>
+                      {isPhone
+                        ? "电脑和这台手机必须在同一个 Wi-Fi。二维码 10 分钟内有效。"
+                        : "手机和电脑必须在同一个 Wi-Fi。二维码 10 分钟内有效。"}
+                    </span>
                   </div>
                   <div className="transfer-url">
-                    <span>打不开？手动输入</span>
+                    <span>{isPhone ? "电脑打不开？手动输入" : "打不开？手动输入"}</span>
                     <code>{snap.url}</code>
                   </div>
                   <div className="transfer-net">
                     <span className={`transfer-dot${snap.device ? " on" : ""}`} />
-                    {snap.device ? `已连接：${snap.device.name}` : "等待手机扫码…"}
+                    {snap.device
+                      ? `已连接：${snap.device.name}`
+                      : isPhone
+                        ? "等待电脑扫码…"
+                        : "等待手机扫码…"}
                   </div>
                 </aside>
 
@@ -372,8 +396,12 @@ export function TransferDialog({ bookPath, outline = null, onClose, onApplied }:
                     <div className="transfer-waiting">
                       <span className="transfer-spinner small" />
                       <div>
-                        <b>等手机点“绑定这台手机”</b>
-                        <p>手机页面会先显示“已绑定”，然后电脑这边才会出现确认按钮。</p>
+                        <b>{isPhone ? "等电脑打开并绑定这台手机" : "等手机点“绑定这台手机”"}</b>
+                        <p>
+                          {isPhone
+                            ? "电脑网页会先显示“已连接”，然后这里才会出现确认按钮。"
+                            : "手机页面会先显示“已绑定”，然后电脑这边才会出现确认按钮。"}
+                        </p>
                       </div>
                     </div>
                   ) : (

@@ -21,6 +21,7 @@ export function Modal({
   actions,
   wide,
   wider,
+  compact,
   onClose,
 }: {
   title: string;
@@ -29,6 +30,7 @@ export function Modal({
   actions?: ReactNode;
   wide?: boolean;
   wider?: boolean;
+  compact?: boolean;
   onClose: () => void;
 }) {
   useEffect(() => {
@@ -46,7 +48,7 @@ export function Modal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className={`modal glass${wide ? " wide" : ""}${wider ? " wider" : ""}`} role="dialog" aria-modal="true">
+      <div className={`modal glass${wide ? " wide" : ""}${wider ? " wider" : ""}${compact ? " compact" : ""}`} role="dialog" aria-modal="true">
         <div className="modal-head">
           <div>
             <h3>{title}</h3>
@@ -373,6 +375,7 @@ export function PromptDialog({
       title={title}
       subtitle={subtitle}
       onClose={onClose}
+      compact
       actions={
         <>
           <button className="btn btn-ghost" onClick={onClose}>
@@ -432,6 +435,7 @@ export function ConfirmDialog({
     <Modal
       title={title}
       onClose={onClose}
+      compact
       actions={
         <>
           <button className="btn btn-ghost" onClick={onClose}>

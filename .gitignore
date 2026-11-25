@@ -27,3 +27,6 @@ release/*
 
 # ---- Tauri 生成的 schema 索引（构建时重建）----
 src-tauri/gen/
+
+# ---- 签名私钥（绝不入库）----
+.signing/

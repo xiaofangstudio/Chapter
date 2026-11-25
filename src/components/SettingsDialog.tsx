@@ -696,11 +696,14 @@ export function SettingsDialog(props: SettingsDialogProps) {
     <div className={`settings-overlay${closing ? " closing" : ""}`} onMouseDown={(e) => e.target === e.currentTarget && requestClose()}>
       <div className="settings-shell glass" role="dialog" aria-modal="true" aria-label={t("偏好设置")}>
         <header className="settings-head">
-          <div>
+          <button className="icon-btn settings-back" onClick={requestClose} title={t("返回")} aria-label={t("返回")}>
+            <Icon name="arrow" size={18} />
+          </button>
+          <div className="settings-head-copy">
             <h1>{t("偏好设置")}</h1>
             <p>{t("仅影响这台电脑上的 Chapter。")}</p>
           </div>
-          <button className="icon-btn" onClick={requestClose} title={t("关闭")}>
+          <button className="icon-btn settings-close" onClick={requestClose} title={t("关闭")} aria-label={t("关闭")}>
             <Icon name="close" size={16} />
           </button>
         </header>

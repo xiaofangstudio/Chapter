@@ -89,8 +89,8 @@ export function TopBar(props: Props) {
         <button className="icon-btn topbar-nav-toggle" title={t("目录")} onClick={onToggleSidebar}>
           <Icon name="outline" size={17} />
         </button>
-        <button className="icon-btn" title={t("回到书架")} onClick={onBack}>
-          <Icon name="book" size={17} />
+        <button className="icon-btn topbar-back" title={t("回到书架")} onClick={onBack}>
+          <Icon name="chevron" size={18} />
         </button>
         <div className="book-chip">
           <NovelCover

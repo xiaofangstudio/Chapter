@@ -608,7 +608,7 @@ export function Editor({
       <div className="paper-scroll" ref={scrollRef}>
         <article className="paper" style={{ "--editor-font": `${fontSize}px` } as CSSProperties}>
           <input
-            className="ch-title"
+            className={`ch-title${title.length > 18 ? " is-long" : ""}`}
             ref={titleRef}
             value={title}
             spellCheck={false}

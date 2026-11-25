@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -28,6 +28,29 @@ import type {
   ViewKind,
   Volume,
 } from "./types";
+
+type BoundaryState = { error: Error | null };
+
+class EditorBoundary extends Component<{ children: ReactNode }, BoundaryState> {
+  state: BoundaryState = { error: null };
+  static getDerivedStateFromError(error: Error): BoundaryState {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="editor-load-error">
+          <div className="ele-card">
+            <h3>这本书暂时打不开</h3>
+            <p>排版或编辑数据可能损坏。你的原稿仍在书库中，不会丢失。</p>
+            <button type="button" className="btn-primary" onClick={() => this.setState({ error: null })}>重试</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 import { LANGUAGES } from "./types";
 import { api, errText } from "./lib/api";
 performance.mark?.("chapter:app-module");
@@ -309,6 +332,30 @@ export default function App() {
     null,
   );
   const modalCloseTimer = useRef<number | undefined>(undefined);
+  const modalHistory = useRef(false);
+  const projectHistory = useRef(false);
+  const suppressBack = useRef(false);
+  const closeBookForBack = useRef<() => void>(() => undefined);
+
+  // 手机键盘弹出时，dvh 不会跟着缩；用可视视口高度当真实页面高度。
+  useEffect(() => {
+    const vv = window.visualViewport;
+    const sync = () => {
+      const h = vv?.height ?? window.innerHeight;
+      document.documentElement.style.setProperty("--app-h", `${Math.round(h)}px`);
+      const kb = Math.max(0, window.innerHeight - h - (vv?.offsetTop ?? 0));
+      document.documentElement.style.setProperty("--kb-inset", `${Math.round(kb)}px`);
+    };
+    sync();
+    vv?.addEventListener("resize", sync);
+    vv?.addEventListener("scroll", sync);
+    window.addEventListener("resize", sync);
+    return () => {
+      vv?.removeEventListener("resize", sync);
+      vv?.removeEventListener("scroll", sync);
+      window.removeEventListener("resize", sync);
+    };
+  }, []);
   const [matterDialog, setMatterDialog] = useState(false);
   const [printStudio, setPrintStudio] = useState<null | "pdf" | "word">(null);
   const [settingsSection, setSettingsSection] = useState<
@@ -410,6 +457,75 @@ export default function App() {
     },
     [],
   );
+
+  // 手机上把弹层和书写页都当成真实页面：系统返回先关弹层，再退回书架。
+  useEffect(() => {
+    const onPop = () => {
+      if (suppressBack.current) {
+        suppressBack.current = false;
+        return;
+      }
+      // 有些页面自己管弹层（封面选择、书籍设置等），没进全局 modal 历史。
+      // 返回时先把被弹掉的作品状态 forward 回来，再点关闭，避免一滑直接退回书架。
+      if (!modalHistory.current) {
+        const localModal = document.querySelector<HTMLElement>(".backdrop .modal");
+        if (localModal) {
+          suppressBack.current = true;
+          window.history.forward();
+          window.setTimeout(() => {
+            localModal.querySelector<HTMLElement>(".modal-head .icon-btn")?.click();
+          }, 0);
+          return;
+        }
+      }
+      if (modalHistory.current) {
+        modalHistory.current = false;
+        document.documentElement.removeAttribute("data-modal-closing");
+        setModal(null);
+        return;
+      }
+      if (projectRef.current) {
+        projectHistory.current = false;
+        void closeBookForBack.current();
+      }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  useEffect(() => {
+    if (modal && !modalHistory.current) {
+      modalHistory.current = true;
+      window.history.pushState({ chapterModal: true }, "");
+      return;
+    }
+    if (!modal && modalHistory.current) {
+      const pushed = window.history.state?.chapterModal === true;
+      modalHistory.current = false;
+      if (pushed) {
+        suppressBack.current = true;
+        window.history.back();
+      }
+    }
+  }, [modal]);
+
+  useEffect(() => {
+    if (project) {
+      if (!projectHistory.current) {
+        projectHistory.current = true;
+        window.history.pushState({ chapterBook: true }, "");
+      }
+      return;
+    }
+    if (projectHistory.current) {
+      const pushed = window.history.state?.chapterBook === true;
+      projectHistory.current = false;
+      if (pushed) {
+        suppressBack.current = true;
+        window.history.back();
+      }
+    }
+  }, [project]);
 
   const closeMatter = useCallback(() => {
     if (document.documentElement.dataset.modalClosing === "1") return;
@@ -984,6 +1100,10 @@ export default function App() {
     await api.mcpSetProject(null).catch(() => undefined);
     await refreshBooks();
   }, [refreshBooks, saveAll]);
+
+  closeBookForBack.current = () => {
+    void backToShelf();
+  };
 
   /** 外部工具（MCP / Git）改过磁盘后，只重读当前工程，不替用户写回任何东西。 */
   const reloadFromDisk = useCallback(async (focusChapter?: string) => {
@@ -2407,7 +2527,8 @@ export default function App() {
                       />
                     </Suspense>
                   ) : (
-                  <Editor
+                  <EditorBoundary>
+                    <Editor
                     key={`${project.path}:${activeChapter.id}:${editorEpoch}`}
                     chapter={activeChapter}
                     body={project.bodies[activeChapter.id] ?? ""}
@@ -2429,6 +2550,7 @@ export default function App() {
                     onInsertLore={() => setLorePicker(true)}
                     onToggleFocus={() => setFocus((f) => !f)}
                   />
+                  </EditorBoundary>
                   )
                 ) : (
                   <div className="view-scroll">

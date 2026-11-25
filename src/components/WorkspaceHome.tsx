@@ -207,7 +207,9 @@ export function WorkspaceHome({
   const [notes, setNotes] = useState<Note[]>(readNotes);
   const [selectedNote, setSelectedNote] = useState<string | null>(null);
   const [noteSearch, setNoteSearch] = useState("");
-  const [notePreview, setNotePreview] = useState(true);
+  const [notePreview, setNotePreview] = useState(
+    () => typeof window === "undefined" || window.innerWidth > 820,
+  );
   const [noteSavedAt, setNoteSavedAt] = useState(0);
   const bookCoverRef = useRef<HTMLDivElement | null>(null);
   const mainRef = useRef<HTMLDivElement | null>(null);
@@ -610,7 +612,7 @@ which === "home" ? (
             </section>
 
             <div className="wb-grid">
-              <section className="wb-book-card glow-card">
+              <section className={`wb-book-card glow-card${current ? "" : " is-empty"}`}>
                 {current ? (
                   <>
                     <div className="wb-book-head">
@@ -1041,7 +1043,7 @@ which === "home" ? (
             <div className="wb-pane-head">
               <div>
                 <h1>{t("灵感便签")}</h1>
-                <p>{t("左边找笔记，右边用 Markdown 写；置顶、标签、实时预览，都只在本地。")}</p>
+                <p>{t("置顶、标签、Markdown 实时预览；都只在本地。")}</p>
               </div>
               <span className="wb-notes-count">
                 {notes.length} {t("条")}
@@ -1255,11 +1257,23 @@ which === "home" ? (
               )}
             </button>
           ))}
-          <button type="button" className="wb-rail-item" onClick={onSettings} title={t("偏好设置")}>
+          <button type="button" className="wb-rail-item wb-rail-settings" onClick={onSettings} title={t("偏好设置")}>
             <Icon name="settings" size={16} />
             <span className="wb-rail-label">{t("偏好设置")}</span>
           </button>
         </nav>
+
+        <div className="wb-rail-mobile-actions">
+          <button type="button" className="wb-rail-item" onClick={onTransfer} title={t("手机互传")} aria-label={t("手机互传")}>
+            <Icon name="download" size={17} />
+          </button>
+          <button type="button" className="wb-rail-item" onClick={onToggleTheme} title={theme === "light" ? t("切到夜幕") : t("切到夕阳")} aria-label={theme === "light" ? t("切到夜幕") : t("切到夕阳")}>
+            <Icon name={theme === "light" ? "moon" : "sun"} size={17} />
+          </button>
+          <button type="button" className="wb-rail-item" onClick={onSettings} title={t("偏好设置")} aria-label={t("偏好设置")}>
+            <Icon name="settings" size={17} />
+          </button>
+        </div>
 
         <div className="wb-rail-spacer" />
 

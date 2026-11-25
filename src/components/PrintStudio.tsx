@@ -174,7 +174,12 @@ export function PrintStudio({
     }
     return DEFAULT_OPTS;
   });
-  const [zoom, setZoom] = useState(0.82);
+  const [zoom, setZoom] = useState(() => {
+    if (typeof window !== "undefined" && window.innerWidth <= 820) {
+      return Math.min(0.5, (window.innerWidth - 36) / 794);
+    }
+    return 0.82;
+  });
   const [previewScope, setPreviewScope] = useState<"chapter" | "book">("chapter");
   const [bookLimit, setBookLimit] = useState(12);
   const [images, setImages] = useState<Record<string, PrintImage[]>>({});
@@ -185,6 +190,7 @@ export function PrintStudio({
   const [done, setDone] = useState("");
   const [doneOk, setDoneOk] = useState(false);
   const [presetSaved, setPresetSaved] = useState(false);
+  const [mobilePane, setMobilePane] = useState<"preview" | "settings">("preview");
 
   const chapters = useMemo(
     () =>
@@ -422,6 +428,14 @@ export function PrintStudio({
           <b>{t("自打印 · 排版工作台")}</b>
           <em>{project.meta.title || "未命名"} · {chapters.length} {t("章")}</em>
         </div>
+        <div className="ps-mobile-tabs" role="tablist">
+          <button className={mobilePane === "preview" ? "on" : ""} onClick={() => setMobilePane("preview")}>
+            {t("预览")}
+          </button>
+          <button className={mobilePane === "settings" ? "on" : ""} onClick={() => setMobilePane("settings")}>
+            {t("排版设置")}
+          </button>
+        </div>
         <div className="ps-top-actions">
           <div className="ps-target">
             <button className={target === "pdf" ? "on" : ""} onClick={() => setTarget("pdf")}>
@@ -438,7 +452,7 @@ export function PrintStudio({
         </div>
       </header>
 
-      <div className="ps-body">
+      <div className={`ps-body mobile-${mobilePane}`}>
         <aside className="ps-panel">
           <section className="ps-sec">
             <h3>{t("排版预设")}</h3>
@@ -699,7 +713,7 @@ export function PrintStudio({
               <button onClick={() => setZoom((z) => Math.max(0.45, z - 0.1))}>−</button>
               <span>{Math.round(zoom * 100)}%</span>
               <button onClick={() => setZoom((z) => Math.min(1.2, z + 0.1))}>+</button>
-              <button className="fit" onClick={() => setZoom(0.82)}>
+              <button className="fit" onClick={() => setZoom(window.innerWidth <= 820 ? Math.min(0.5, (window.innerWidth - 36) / 794) : 0.82)}>
                 {t("适合")}
               </button>
             </div>
