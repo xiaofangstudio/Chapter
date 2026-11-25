@@ -24,3 +24,6 @@ Thumbs.db
 release/*
 !release/下载说明.md
 !release/SHA256SUMS.txt
+
+# ---- Tauri 生成的 schema 索引（构建时重建）----
+src-tauri/gen/

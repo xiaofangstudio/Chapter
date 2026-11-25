@@ -147,6 +147,33 @@ export function combineSelection(
   return out;
 }
 
+/** 两张同尺寸遮罩求交集，用于「选区 ∩ 锁定透明 ∩ 剪贴蒙版」。 */
+export function intersectMasks(
+  a: HTMLCanvasElement | null,
+  b: HTMLCanvasElement | null,
+): HTMLCanvasElement | null {
+  if (!a) return b;
+  if (!b) return a;
+  if (a.width !== b.width || a.height !== b.height) return null;
+  const out = cloneSurface(a);
+  const ctx = mustCtx(out);
+  ctx.globalCompositeOperation = "destination-in";
+  ctx.drawImage(b, 0, 0);
+  ctx.globalCompositeOperation = "source-over";
+  return out;
+}
+
+/** 平移一张遮罩，移动选区内容时让选区跟着走。 */
+export function offsetMask(
+  mask: HTMLCanvasElement,
+  dx: number,
+  dy: number,
+): HTMLCanvasElement {
+  const out = createSelectionMask(mask.width, mask.height);
+  mustCtx(out).drawImage(mask, dx, dy);
+  return out;
+}
+
 /** 形态学膨胀：选区向外扩 radius 像素。 */
 export function expandSelection(mask: HTMLCanvasElement, radius: number): HTMLCanvasElement {
   if (radius <= 0) return cloneSurface(mask);

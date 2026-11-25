@@ -1,0 +1,1370 @@
+/* 手机/竖屏覆盖层：不改桌面，只在 ≤820px 生效。 */
+html,
+body,
+#root {
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.comic-mobile-dock,
+.comic-dock-zoom-pop {
+  display: none;
+}
+
+.topbar-nav-toggle,
+.comic-multi-btn,
+.comic-mobile-inspector-btn,
+.comic-mobile-pages-btn,
+.comic-pages-close,
+.comic-inspector-close,
+.mobile-nav-scrim,
+.comic-mobile-scrim {
+  display: none;
+}
+
+@media (max-width: 820px) {
+  :root {
+    --mobile-pad: 14px;
+  }
+
+  body {
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .topbar {
+    height: auto;
+    min-height: 48px;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    padding: max(6px, env(safe-area-inset-top)) 8px 6px;
+    align-content: center;
+  }
+
+  .topbar-left {
+    order: 1;
+    flex: 1 1 60%;
+    gap: 7px;
+    min-width: 0;
+  }
+
+  .topbar-nav-toggle {
+    display: inline-grid;
+  }
+
+  .topbar-right {
+    order: 2;
+    margin-left: auto;
+    gap: 4px;
+  }
+
+  .topbar-right {
+    display: none;
+  }
+
+  .topbar-center {
+    order: 3;
+    flex: 0 0 100%;
+    width: 100%;
+    gap: 4px;
+    overflow-x: auto;
+    padding: 2px 0 1px;
+    scrollbar-width: none;
+  }
+
+  .topbar-center::-webkit-scrollbar {
+    display: none;
+  }
+
+  .topbar .book-chip,
+  .topbar .save-dot,
+  .topbar-right .btn-primary,
+  .topbar-right .icon-btn[title="手机互传"],
+  .topbar-right .icon-btn[title="切到夜幕"],
+  .topbar-right .icon-btn[title="切到夕阳"],
+  .topbar-right .icon-btn[title="偏好设置"] {
+    display: none;
+  }
+
+  .topbar-title {
+    max-width: 52vw;
+    font-size: 15px;
+  }
+
+  .topbar .seg-btn {
+    flex: 0 0 auto;
+    min-height: 36px;
+    padding: 0 12px;
+  }
+
+  .editor-toolbar {
+    height: 44px;    padding: 0 10px;
+    gap: 4px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
+  .editor-toolbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .editor-toolbar .tbtn,
+  .editor-toolbar .font-picker {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .editor-toolbar .tbtn span {
+    white-space: nowrap;
+  }
+
+  .editor-toolbar .grow {
+    display: none;
+  }
+
+  .editor-toolbar .divider-v {
+    flex: 0 0 auto;
+    margin: 0 4px;
+  }
+
+  .modal,
+  .modal.wide,
+  .modal.wider {
+    width: calc(100vw - 16px);
+    max-width: none;
+    max-height: calc(100dvh - 16px);
+    padding: 16px;
+  }
+
+  .backdrop {
+    align-items: flex-start;
+    padding-top: calc(env(safe-area-inset-top, 0px) + 24px);
+  }
+
+  .booktype-switch {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .booktype-card {
+    min-height: 88px;
+    padding: 12px;
+  }
+
+  .booktype-art {
+    display: none;
+  }
+
+  .booktype-text strong {
+    font-size: 15px;
+  }
+
+  .booktype-text em {
+    display: none;
+  }
+
+  .modal .modal-actions {
+    position: sticky;
+    bottom: -16px;
+    z-index: 2;
+    margin: 12px -16px -16px;
+    padding: 10px 16px max(12px, env(safe-area-inset-bottom));
+    background: color-mix(in srgb, var(--surface) 96%, transparent);
+    border-top: 1px solid var(--border);
+  }
+
+  .welcome .hero-actions .btn-outline,
+  .wb-open-folder {
+    display: none;
+  }
+
+  .welcome-top {
+    height: auto;
+    min-height: 58px;
+    padding: calc(env(safe-area-inset-top, 0px) + 30px) 14px 10px;
+    gap: 6px;
+  }
+
+  .welcome-top .brand {
+    min-width: 0;
+    gap: 7px;
+  }
+
+  .welcome-top .brand .logo {
+    width: 22px;
+    height: 22px;
+  }
+
+  .welcome-top .brand-word {
+    font-size: 17px;
+    letter-spacing: 0.4px;
+  }
+
+  .welcome-top .brand-sub {
+    display: none;
+  }
+
+  .welcome-top .home-mode-btn {
+    padding: 6px 9px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .welcome-top .home-mode-btn svg {
+    width: 12px;
+  }
+
+  .welcome-main {
+    display: block;
+    padding: 12px 16px calc(86px + env(safe-area-inset-bottom));
+  }
+
+  .welcome .hero {
+    display: block;
+    min-height: 0;
+    padding: 4px 0 18px;
+  }
+
+  .welcome .hero-welcome {
+    margin: 0 0 10px;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  .welcome .hero h1 {
+    font-size: 30px;
+    line-height: 1.28;
+    letter-spacing: -0.8px;
+  }
+
+  .welcome .hero h1 br {
+    display: none;
+  }
+
+  .welcome .hero h1 em {
+    margin-left: 0;
+  }
+
+  .welcome .hero:not(.onboarding) > p:not(.hero-welcome) {
+    display: none;
+  }
+
+  .welcome .hero-actions {
+    margin-top: 14px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .welcome .hero-actions .btn-lg {
+    padding: 10px 14px;
+    font-size: 13px;
+  }
+
+  .welcome .hero-foot {
+    margin-top: 14px;
+    gap: 8px;
+    font-size: 11px;
+    flex-wrap: wrap;
+  }
+
+  .welcome .shelf {
+    margin-top: 8px;
+  }
+
+  .welcome .shelf-head h2 {
+    font-size: 18px;
+  }
+
+  .welcome .shelf-scroll {
+    padding-bottom: 28px;
+  }
+
+  .welcome .book-card {
+    min-height: 0;
+  }
+
+  .comic-join-btn {
+    flex: 0 0 auto;
+    height: 34px;
+    padding: 0 14px;
+    border-color: #b9581f;
+    border-radius: 17px;
+    background: #c2622b;
+    color: #fff;
+    font-size: 12px;
+    box-shadow: 0 6px 18px rgba(120, 55, 18, 0.22);
+  }
+
+  .intro-top {
+    height: auto;
+    min-height: 58px;
+    padding: calc(env(safe-area-inset-top, 0px) + 30px) 14px 8px;
+    gap: 8px;
+  }
+
+  .intro-brand {
+    font-size: 12px;
+    gap: 6px;
+  }
+
+  .ws-body {
+    position: relative;
+  }
+
+  .mobile-nav-scrim,
+  .comic-mobile-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 31;
+    border: 0;
+    background: rgba(24, 18, 12, 0.28);
+    backdrop-filter: blur(2px);
+  }
+
+  .workspace .sidebar {
+    display: none;
+    position: fixed;
+    z-index: 32;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: min(86vw, 330px);
+    flex: 0 0 auto;
+    padding-top: env(safe-area-inset-top);
+    box-shadow: 24px 0 60px rgba(30, 20, 10, 0.22);
+  }
+
+  .workspace.mobile-nav .sidebar {
+    display: flex;
+  }
+
+  .stage,
+  .stage.panel-open {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .info-panel {
+    position: fixed;
+    z-index: 32;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: min(88vw, 360px);
+    padding-top: env(safe-area-inset-top);
+    box-shadow: -24px 0 60px rgba(30, 20, 10, 0.22);
+  }
+
+  .workspace-home,
+  .workbench,
+  .wb-pane {
+    padding-left: var(--mobile-pad);
+    padding-right: var(--mobile-pad);
+  }
+
+  .workspace-home {
+    flex-direction: row;
+  }
+
+  .wb-rail {
+    flex: 0 0 56px;
+    width: 56px;
+    padding: max(8px, env(safe-area-inset-top)) 5px 8px;
+  }
+
+  .wb-rail-brand-text,
+  .wb-rail-seal,
+  .wb-rail-quote,
+  .wb-rail-today,
+  .wb-rail-minimal,
+  .wb-rail-spacer {
+    display: none;
+  }
+
+  .wb-rail-brand {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .wb-rail-nav {
+    margin-top: 12px;
+    gap: 4px;
+  }
+
+  .wb-rail-item {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    justify-content: center;
+    border-radius: 12px;
+  }
+
+  .wb-rail-label,
+  .wb-rail-count {
+    display: none;
+  }
+
+  .wb-main-top {
+    flex-wrap: wrap;
+    gap: 4px 6px;
+    padding: 10px 2px 8px;
+    min-height: 0;
+  }
+
+  .wb-top-copy {
+    flex: 1 1 100%;
+  }
+
+  .wb-top-eyebrow {
+    font-size: 9px;
+  }
+
+  .home-mode-btn {
+    display: none;
+  }
+
+  .wb-main-top .icon-btn[title="切到夜幕"],
+  .wb-main-top .icon-btn[title="切到夕阳"] {
+    display: none;
+  }
+
+  .wb-view-stack {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .wb-glance {
+    display: none;
+  }
+
+  .wb-glance-left,
+  .wb-glance-right {
+    flex-wrap: wrap;
+    gap: 6px 10px;
+  }
+
+  .wb-greeting {
+    padding: 18px 2px 10px;
+  }
+
+  .wb-greeting h1 {
+    font-size: clamp(28px, 8vw, 42px);
+    line-height: 1.15;
+  }
+
+  .wb-quick {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .wb-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .wb-book-card,
+  .wb-calendar,
+  .wb-today {
+    padding: 16px;
+  }
+
+  .wb-book-stage {
+    height: min(38vh, 250px);
+  }
+
+  .workspace-home .wb-cover-frame {
+    width: min(44vw, 186px);
+  }
+
+  .wb-calendar {
+    display: none;
+  }
+
+  .wb-comic-today {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 14px 0;
+  }
+
+  .wb-comic-today b {
+    font-size: 38px;
+    line-height: 1;
+    color: var(--accent-ink, #225f50);
+  }
+
+  .wb-comic-today em {
+    font-size: 13px;
+    font-style: normal;
+    color: var(--text-3);
+  }
+
+  .wb-comic-today p {
+    margin: 6px 0 12px;
+    color: var(--text-2);
+  }
+
+  .wb-shelf-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .wb-shelf-cover {
+    height: min(34vh, 240px);
+  }
+
+  .wb-shelf-card {
+    min-width: 0;
+  }
+
+  .wb-pane-head {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .wb-pane-actions {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .wb-search {
+    flex: 1 1 100%;
+  }
+
+  .wb-shelf-copy span {
+    white-space: normal;
+  }
+
+  .comic-app {
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .comic-body,
+  .comic-body.focusing {
+    grid-template-columns: minmax(0, 1fr) !important;
+    position: relative;
+  }
+
+  .comic-pages {
+    display: none;
+    position: absolute;
+    z-index: 60;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-height: 56%;
+    width: auto;
+    flex-direction: column;
+    padding: 10px;
+    border-right: 0;
+    border-top: 1px solid var(--border);
+    border-radius: 20px 20px 0 0;
+    background: var(--surface);
+    box-shadow: 0 -18px 50px rgba(30, 20, 10, 0.2);
+  }
+
+  .comic-pages.open {
+    display: flex;
+  }
+
+  .comic-pages .comic-rail-head {
+    flex: 0 0 38px;
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 0 4px;
+  }
+
+  .comic-pages .comic-page-list {
+    width: 100%;
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+  }
+
+  .comic-page-card {
+    flex: 0 0 92px;
+  }
+
+  .comic-pages-close {
+    display: inline-grid;
+    width: 32px;
+    height: 32px;
+    margin-left: auto;
+    font-size: 16px;
+  }
+
+  .comic-multi-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 28px;
+    padding: 0 9px;
+    border-radius: 8px;
+    font-size: 11.5px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-2);
+  }
+
+  .comic-multi-btn.on {
+    color: #fff;
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .comic-mobile-pages-btn {
+    display: grid;
+    position: absolute;
+    z-index: 50;
+    right: 12px;
+    bottom: 144px;
+    min-width: 52px;
+    height: 44px;
+    padding: 0 12px;
+    border-radius: 999px;
+    color: var(--text);
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    border: 1px solid var(--border);
+    box-shadow: 0 6px 16px rgba(40, 26, 14, 0.16);
+  }
+
+  .comic-inspector {
+    display: flex;
+    position: absolute;
+    z-index: 60;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-height: 64%;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    border-radius: 20px 20px 0 0;
+    transform: translateY(105%);
+    transition: transform 220ms var(--ease-out);
+    box-shadow: 0 -18px 50px rgba(30, 20, 10, 0.2);
+  }
+
+  .comic-inspector.open {
+    transform: translateY(0);
+  }
+
+  .comic-mobile-scrim {
+    z-index: 59;
+    position: absolute;
+  }
+
+  .comic-inspector-close {
+    display: inline-grid;
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    z-index: 2;
+    margin-left: 0;
+    width: 36px;
+    height: 36px;
+    font-size: 18px;
+  }
+
+  .comic-mobile-inspector-btn {
+    display: grid;
+    position: absolute;
+    z-index: 50;
+    right: 12px;
+    bottom: 92px;
+    min-width: 52px;
+    height: 44px;
+    padding: 0 12px;
+    border-radius: 999px;
+    color: #fff;
+    background: #1f6b58;
+    box-shadow: 0 8px 22px rgba(31, 107, 88, 0.3);
+  }
+
+  .comic-toolbar {
+    left: 8px;
+    right: 8px;
+    bottom: max(8px, env(safe-area-inset-bottom));
+    max-width: none;
+    width: auto;
+    transform: none;
+    padding: 6px 8px;
+    gap: 2px;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    border-radius: 18px;
+    scrollbar-width: none;
+  }
+
+  .comic-toolbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .comic-tool {
+    flex: 0 0 38px;
+    min-width: 38px;
+    height: 44px;
+  }
+
+  .comic-toolbar-colors {
+    display: none;
+  }
+
+  .comic-stage-topline {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 10px;
+  }
+
+  .comic-stage-hint,
+  .comic-stage-actions .comic-canvas-zoom,
+  .comic-stage-actions .comic-magnet,
+  .comic-stage-actions .comic-save-pill,
+  .comic-focus-history,
+  .comic-focus-head .comic-zoom,
+  .comic-focus-head > div > span {
+    display: none;
+  }
+
+  .comic-stage-actions {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .comic-focus-head {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 10px;
+  }
+
+  .comic-crop-head,
+  .comic-modal {
+    width: min(94vw, 560px);
+  }
+
+  .comic-modal {
+    padding: 14px;
+    max-height: 82vh;
+  }
+
+  .comic-modal-mask {
+    padding: 12px;
+  }
+
+  .comic-advanced-menu {
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-height: 62vh;
+  }
+
+  .comic-filter-panel {
+    left: 8px;
+    right: 8px;
+    width: auto;
+  }
+}
+
+@media (max-width: 420px) {
+  .topbar .seg-btn span {
+    display: none;
+  }
+
+  .topbar .seg-btn {
+    padding: 0 10px;
+  }
+
+  .wb-shelf-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .comic-tool span {
+    display: none;
+  }
+}
+
+.comic-status span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.comic-status em {
+  flex: 0 0 auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ───────── 手机漫画工作台：分层 Dock + 底部面板 ───────── */
+@media (max-width: 820px) {
+  .comic-toolbar {
+    display: none;
+  }
+
+  .topbar-center {
+    position: static;
+    left: auto;
+    transform: none;
+    width: 100%;
+    justify-content: space-between;
+    gap: 3px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    overflow-x: auto;
+  }
+
+  .topbar .seg-btn {
+    flex: 1 1 0;
+    justify-content: center;
+    min-width: 0;
+    min-height: 32px;
+    padding: 0 6px;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .topbar .seg-btn .seg-caret {
+    display: none;
+  }
+
+  .comic-mobile-pages-btn,
+  .comic-mobile-inspector-btn {
+    display: none;
+  }
+
+  .comic-action-ghost,
+  .comic-stage-hint {
+    display: none;
+  }
+
+  .comic-stage-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .comic-stage-actions .comic-head-menu,
+  .comic-stage-actions .comic-multi-btn {
+    height: 30px;
+    padding: 0 10px;
+    border-radius: 10px;
+    font-size: 11px;
+  }
+
+  .comic-stage-topline {
+    padding: 6px 10px;
+    min-height: 44px;
+    gap: 6px;
+  }
+
+  .comic-stage-title {
+    flex: 1 1 100%;
+    gap: 6px;
+  }
+
+  .comic-stage-title strong {
+    font-size: 13px;
+  }
+
+  .comic-stage-title span {
+    font-size: 10px;
+  }
+
+  .comic-stage-actions .comic-multi-btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  .comic-join-btn {
+    order: -1;
+    flex: 1 1 100%;
+    height: 34px;
+    justify-content: center;
+  }
+
+  .comic-paper-fit,
+  .comic-paper-fit.zoomed {
+    padding: 10px 14px calc(132px + env(safe-area-inset-bottom));
+  }
+
+  .comic-paper-fit.focus {
+    padding: 4px 12px calc(132px + env(safe-area-inset-bottom));
+  }
+
+  .comic-mobile-dock {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    position: absolute;
+    z-index: 5;
+    left: 8px;
+    right: 8px;
+    bottom: max(8px, env(safe-area-inset-bottom));
+    padding: 5px 7px 6px;
+    border-radius: 18px;
+    border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+    background: color-mix(in srgb, var(--surface) 93%, transparent);
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.35) inset,
+      0 18px 42px rgba(24, 16, 8, 0.26);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+  }
+
+  .comic-dock-zoom-pop {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    position: absolute;
+    right: 4px;
+    bottom: calc(100% + 8px);
+    padding: 5px 6px;
+    border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+    background: color-mix(in srgb, var(--surface) 96%, transparent);
+    box-shadow: 0 12px 30px rgba(24, 16, 8, 0.2);
+  }
+
+  .comic-dock-zoom-pop button {
+    height: 34px;
+    min-width: 38px;
+    padding: 0 10px;
+    border-radius: 9px;
+    font-size: 15px;
+    color: var(--text-2);
+    background: color-mix(in srgb, var(--text) 5%, transparent);
+  }
+
+  .comic-dock-zoom-pop button.fit {
+    font-size: 11px;
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+
+  .comic-dock-zoom-pop span {
+    min-width: 46px;
+    text-align: center;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-2);
+  }
+
+  .comic-dock-actions {
+    display: flex;
+    gap: 2px;
+  }
+
+  .comic-dock-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    padding: 0 2px;
+    border-radius: 9px;
+    color: color-mix(in srgb, var(--text) 68%, transparent);
+    background: transparent;
+    position: relative;
+    transition: background 140ms var(--ease-out), color 140ms var(--ease-out);
+  }
+
+  .comic-dock-btn.active,
+  .comic-dock-btn:active {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 13%, transparent);
+  }
+
+  .comic-dock-btn .comic-dock-icon {
+    display: grid;
+    place-items: center;
+    width: 15px;
+    height: 15px;
+  }
+
+  .comic-dock-btn .comic-dock-icon svg {
+    width: 15px;
+    height: 15px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .comic-dock-btn span {
+    font-size: 10px;
+    white-space: nowrap;
+  }
+
+  .comic-dock-btn em {
+    position: absolute;
+    top: 1px;
+    right: 3px;
+    min-width: 13px;
+    height: 13px;
+    padding: 0 3px;
+    border-radius: 7px;
+    font-size: 8px;
+    font-style: normal;
+    line-height: 13px;
+    text-align: center;
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  }
+
+  .comic-dock-tools {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding-top: 3px;
+    border-top: 1px solid color-mix(in srgb, var(--text) 7%, transparent);
+  }
+
+  .comic-dock-tools .comic-tool {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 48px;
+    padding: 0 2px;
+    border-radius: 12px;
+    gap: 2px;
+  }
+
+  .comic-dock-tools .comic-tool svg {
+    width: 19px;
+    height: 19px;
+  }
+
+  .comic-dock-tools .comic-tool span {
+    display: inline;
+    font-size: 9.5px;
+    white-space: nowrap;
+  }
+
+  .comic-dock-color {
+    position: relative;
+    flex: 0 0 46px;
+    height: 48px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    border-radius: 12px;
+    color: var(--text-3);
+  }
+
+  .comic-dock-color span {
+    width: 22px;
+    height: 22px;
+    border-radius: 8px;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22) inset, 0 3px 8px rgba(20, 14, 8, 0.22);
+  }
+
+  .comic-dock-color em {
+    font-size: 9.5px;
+    font-style: normal;
+  }
+
+  .comic-dock-color input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+
+  .comic-select-menu {
+    left: 8px;
+    right: 8px;
+    bottom: calc(122px + env(safe-area-inset-bottom));
+    width: auto;
+    max-height: 52dvh;
+    overflow: auto;
+    border-radius: 18px;
+  }
+
+  .comic-select-combine {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 0 8px;
+    font-size: 10px;
+    color: var(--text-3);
+  }
+
+  .comic-select-combine > span {
+    margin-right: auto;
+  }
+
+  .comic-select-combine button {
+    height: 28px;
+    padding: 0 10px;
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    color: var(--text-2);
+    background: var(--surface);
+    font-size: 10.5px;
+  }
+
+  .comic-select-combine button.on {
+    color: #fff;
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .comic-advanced-menu,
+  .comic-filter-panel {
+    left: 8px;
+    right: 8px;
+    top: auto;
+    bottom: calc(122px + env(safe-area-inset-bottom));
+    width: auto;
+    max-height: 58dvh;
+    padding: 8px 12px 14px;
+    border-radius: 20px;
+    gap: 10px;
+    overscroll-behavior: contain;
+  }
+
+  .comic-advanced-menu::before,
+  .comic-filter-panel::before,
+  .comic-inspector::before,
+  .comic-pages::before {
+    content: "";
+    flex: 0 0 auto;
+    width: 38px;
+    height: 4px;
+    margin: 0 auto 4px;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--text) 22%, transparent);
+  }
+
+  .comic-advanced-menu .comic-adv-grid.compact {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .comic-adv-head button {
+    width: 36px;
+    height: 36px;
+    display: grid;
+    place-items: center;
+    border-radius: 10px;
+    font-size: 20px;
+  }
+
+  .comic-advanced-menu .comic-adv-grid button {
+    min-height: 40px;
+    font-size: 11.5px;
+  }
+
+  .comic-advanced-menu .comic-adv-grid .comic-adv-slider {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 34px;
+    padding: 0 2px;
+    font-size: 10.5px;
+    color: var(--text-2);
+  }
+
+  .comic-advanced-menu .comic-adv-grid .comic-adv-slider input {
+    flex: 1;
+    min-width: 0;
+    accent-color: var(--accent);
+  }
+
+  .comic-advanced-menu .comic-adv-group > span {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+  }
+
+  .comic-pages {
+    top: auto;
+    bottom: 0;
+    max-height: 72dvh;
+    padding: 0 10px calc(10px + env(safe-area-inset-bottom));
+    border-radius: 20px 20px 0 0;
+  }
+
+  .comic-pages .comic-rail-head {
+    flex: 0 0 44px;
+    padding: 0 6px;
+    font-size: 12px;
+  }
+
+  .comic-pages-hint {
+    margin-right: auto;
+    font-size: 9px;
+    letter-spacing: 0;
+    color: var(--text-3);
+  }
+
+  .comic-page-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+    gap: 8px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    max-height: 54dvh;
+    padding: 2px 2px 18px;
+  }
+
+  .comic-page-card {
+    width: auto;
+    padding: 5px;
+    border-color: color-mix(in srgb, var(--text) 8%, transparent);
+    background: color-mix(in srgb, var(--surface) 72%, transparent);
+  }
+
+  .comic-page-card.active {
+    border-color: color-mix(in srgb, var(--accent) 46%, transparent);
+    background: color-mix(in srgb, var(--accent) 9%, var(--surface));
+  }
+
+  .comic-page-add {
+    min-height: 108px;
+  }
+
+  .comic-inspector {
+    display: flex;
+    flex-direction: column;
+    max-height: 76dvh;
+    padding-bottom: env(safe-area-inset-bottom);
+    border-radius: 20px 20px 0 0;
+    overscroll-behavior: contain;
+  }
+
+  .comic-tabs {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    padding: 2px 44px 2px 6px;
+    background: color-mix(in srgb, var(--bg) 94%, transparent);
+    backdrop-filter: blur(12px);
+  }
+
+  .comic-tabs button {
+    min-height: 38px;
+    font-size: 12px;
+  }
+
+  .comic-inspector-close {
+    top: 8px;
+    right: 8px;
+  }
+
+  .comic-layer-list {
+    height: 214px;
+    min-height: 214px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 3px 4px 3px 3px;
+    border: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--surface) 58%, transparent);
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    overscroll-behavior: contain;
+  }
+
+  .comic-layer-list::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  .comic-layer-list::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text) 24%, transparent);
+  }
+
+  .comic-layer-row {
+    flex: 0 0 auto;
+  }
+
+  .comic-panel {
+    padding: 0 12px 16px;
+  }
+
+  .comic-panel-title {
+    position: sticky;
+    top: 42px;
+    z-index: 2;
+    background: color-mix(in srgb, var(--bg) 93%, transparent);
+    backdrop-filter: blur(10px);
+  }
+
+  .comic-modal,
+  .comic-crop-head {
+    width: calc(100vw - 16px);
+  }
+
+  .comic-modal {
+    max-height: calc(100dvh - 24px);
+    padding: 14px;
+    border-radius: 18px;
+  }
+
+  .comic-modal-mask {
+    align-items: flex-start;
+    padding: max(16px, env(safe-area-inset-top)) 8px 16px;
+  }
+
+  .comic-status {
+    position: absolute;
+    z-index: 4;
+    left: 50%;
+    bottom: calc(120px + env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    max-width: calc(100% - 40px);
+    height: 20px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+    font-size: 10px;
+    color: color-mix(in srgb, var(--text) 72%, transparent);
+    pointer-events: none;
+  }
+
+  .comic-status span {
+    max-width: 68vw;
+  }
+}
+
+@media (max-width: 380px) {
+  .comic-dock-btn span {
+    display: none;
+  }
+
+  .comic-dock-tools .comic-tool span {
+    font-size: 9px;
+  }
+
+  .comic-dock-color {
+    flex-basis: 40px;
+  }
+}

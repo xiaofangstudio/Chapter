@@ -353,9 +353,58 @@ fn kind_of(path: &str) -> &'static str {
         "note"
     } else if path.starts_with("assets/") {
         "asset"
+    } else if path.starts_with("comic/") {
+        "comic"
     } else {
         "file"
     }
+}
+
+fn collect_dir_files(
+    base: &Path,
+    current: &Path,
+    prefix: &str,
+    paths: &mut BTreeSet<String>,
+) -> Result<(), String> {
+    let entries = match fs::read_dir(current) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(()),
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name,
+            None => continue,
+        };
+        if name.starts_with('.') || name.ends_with(".tmp") || name.ends_with(".part") {
+            continue;
+        }
+        if path.is_dir() {
+            if matches!(name, "trash" | "tmp" | "cache") {
+                continue;
+            }
+            collect_dir_files(base, &path, prefix, paths)?;
+            continue;
+        }
+        if !path.is_file() {
+            continue;
+        }
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if !matches!(ext.as_str(), "json" | "png" | "jpg" | "jpeg" | "webp") {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(base)
+            .map_err(|_| format!("无法计算同步路径：{}", path.display()))?
+            .to_string_lossy()
+            .replace('\\', "/");
+        paths.insert(format!("{prefix}/{rel}"));
+    }
+    Ok(())
 }
 
 fn collect_sync_paths(book: &Path) -> Result<Vec<String>, String> {
@@ -367,6 +416,12 @@ fn collect_sync_paths(book: &Path) -> Result<Vec<String>, String> {
         if book.join(name).is_file() {
             paths.insert(name.to_string());
         }
+    }
+    // 漫画工程：project.json + 每页 page.json、图层 PNG、素材与缩略图。
+    // 只收已知类型，避免把系统垃圾或临时半成品带进同步包。
+    let comic_root = book.join("comic");
+    if comic_root.is_dir() {
+        collect_dir_files(&comic_root, &comic_root, "comic", &mut paths)?;
     }
     for (dir, prefix, ext) in [
         (chapters_dir(book), "chapters", Some("md")),
@@ -693,7 +748,8 @@ fn validate_rel_path(path: &str) -> Result<(), String> {
         || path == LORE_FILE
         || path.starts_with("chapters/")
         || path.starts_with("notes/")
-        || path.starts_with("assets/");
+        || path.starts_with("assets/")
+        || path.starts_with("comic/");
     if !allowed {
         return Err(format!("同步包里有不允许写入的文件：{path}"));
     }
@@ -767,6 +823,29 @@ fn unique_book_dir(library: &Path, title: &str) -> PathBuf {
         n += 1;
     }
     library.join(name)
+}
+
+/// 手机端从浏览器/文件管理器下载了 `.chapterpack`，用 WebView 的 file input
+/// 把字节交给这里落成新书。绕开 Android SAF 的 `content://` 路径问题。
+#[tauri::command]
+pub fn import_chapterpack(data: String) -> Result<String, String> {
+    let bytes = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        data.trim(),
+    )
+    .map_err(|e| format!("同步包数据损坏：{e}"))?;
+    if bytes.is_empty() {
+        return Err("同步包是空的".into());
+    }
+    if bytes.len() > 256 * 1024 * 1024 {
+        return Err("同步包超过 256 MB，先确认是不是选错了文件".into());
+    }
+    let temp = std::env::temp_dir().join(format!("chapterpack-{}.zip", now_ms()));
+    fs::write(&temp, &bytes).map_err(|e| format!("写入临时同步包失败：{e}"))?;
+    let applied = apply_package(None, &temp);
+    let _ = fs::remove_file(&temp);
+    let (dest, _) = applied?;
+    Ok(dest.to_string_lossy().into_owned())
 }
 
 fn apply_package(
@@ -1565,5 +1644,99 @@ fn stop_session() {
         if let Some(path) = session.zip_path.lock().unwrap().take() {
             let _ = fs::remove_file(path);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+    use zip::ZipWriter;
+
+    fn temp_root(tag: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "chapter-sync-test-{tag}-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        ensure_dir(&root).unwrap();
+        root
+    }
+
+    fn write(path: &Path, text: &str) {
+        if let Some(parent) = path.parent() {
+            ensure_dir(parent).unwrap();
+        }
+        fs::write(path, text).unwrap();
+    }
+
+    #[test]
+    fn comic_paths_are_collected_and_allowed() {
+        let root = temp_root("collect");
+        let book = root.join("comic-book");
+        write(&book.join(BOOK_FILE), r#"{"title":"测试漫画","kind":"comic"}"#);
+        write(&book.join("comic/project.json"), r#"{"kind":"comic","pages":[]}"#);
+        write(
+            &book.join("comic/pages/p_1/page.json"),
+            r#"{"id":"p_1","frames":[]}"#,
+        );
+        write(&book.join("comic/pages/p_1/layers/l_1.png"), "png");
+        write(&book.join("comic/pages/p_1/assets/a_1.png"), "png");
+        write(&book.join("comic/pages/p_1/thumbs/t.png"), "png");
+        write(&book.join("comic/pages/p_1/layers/_.tmp"), "tmp");
+        write(
+            &book.join("comic/trash/p_old/page.json"),
+            r#"{"id":"p_old","frames":[]}"#,
+        );
+
+        let paths = collect_sync_paths(&book).unwrap();
+        assert!(paths.contains(&"comic/project.json".to_string()));
+        assert!(paths.contains(&"comic/pages/p_1/page.json".to_string()));
+        assert!(paths.contains(&"comic/pages/p_1/layers/l_1.png".to_string()));
+        assert!(paths.contains(&"comic/pages/p_1/assets/a_1.png".to_string()));
+        assert!(paths.contains(&"comic/pages/p_1/thumbs/t.png".to_string()));
+        assert!(!paths.iter().any(|p| p.ends_with("_.tmp")));
+        assert!(!paths.iter().any(|p| p.contains("/trash/")));
+        for path in paths {
+            validate_rel_path(&path).unwrap();
+        }
+        assert!(validate_rel_path("comic/pages/p_1/../../../etc/passwd").is_err());
+        assert!(validate_rel_path("comic/../book.json").is_err());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn comic_package_applies_to_book() {
+        let root = temp_root("apply");
+        let source = root.join("source");
+        write(&source.join(BOOK_FILE), r#"{"title":"漫画互传","kind":"comic"}"#);
+        write(&source.join("comic/project.json"), r#"{"kind":"comic","pages":[]}"#);
+        write(
+            &source.join("comic/pages/p_1/page.json"),
+            r#"{"id":"p_1","frames":[]}"#,
+        );
+        write(&source.join("comic/pages/p_1/layers/l_1.png"), "png");
+
+        let pack = root.join("comic.chapterpack");
+        let file = File::create(&pack).unwrap();
+        let mut zip = ZipWriter::new(file);
+        let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        for path in collect_sync_paths(&source).unwrap() {
+            let bytes = read_sync_bytes(&source, &path).unwrap();
+            zip.start_file(&path, options).unwrap();
+            zip.write_all(&bytes).unwrap();
+        }
+        zip.finish().unwrap();
+
+        let dest = root.join("dest");
+        write(&dest.join(BOOK_FILE), r#"{"title":"旧书","kind":"comic","createdAt":1}"#);
+        let (applied, manifest) = apply_package(Some(&dest), &pack).unwrap();
+        assert_eq!(applied, dest);
+        assert!(dest.join("comic/pages/p_1/page.json").is_file());
+        assert!(dest.join("comic/pages/p_1/layers/l_1.png").is_file());
+        assert!(manifest.files.iter().any(|f| f.path == "comic/pages/p_1/page.json"));
+        let _ = fs::remove_dir_all(&root);
     }
 }

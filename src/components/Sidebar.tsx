@@ -14,6 +14,9 @@ interface Props {
   outline: Outline;
   activeId: string | null;
   bookWords: number;
+  bookKind?: "novel" | "comic";
+  comicPages?: number;
+  comicPanels?: number;
   onSelectChapter: (id: string) => void;
   onToggleVolume: (id: string) => void;
   onAddVolume: () => void;
@@ -33,6 +36,9 @@ export function Sidebar(props: Props) {
     outline,
     activeId,
     bookWords,
+    bookKind,
+    comicPages = 0,
+    comicPanels = 0,
     onSelectChapter,
     onToggleVolume,
     onAddVolume,
@@ -111,7 +117,9 @@ export function Sidebar(props: Props) {
         <div className="tree-title">
           <span>{t("目录")}</span>
           <em>
-            {tf("{count} 章 · {words} 字", { count: chapterCount, words: fmtWords(bookWords) })}
+            {bookKind === "comic"
+              ? `${chapterCount} ${t("话")} · ${comicPages} ${t("页")} · ${comicPanels} ${t("格")}`
+              : tf("{count} 章 · {words} 字", { count: chapterCount, words: fmtWords(bookWords) })}
           </em>
         </div>
         <button className="icon-btn" title={t("新建一卷")} onClick={onAddVolume} style={{ width: 24, height: 24 }}>

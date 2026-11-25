@@ -283,6 +283,13 @@ export function WorkspaceHome({
     if (pinned) return pinned;
     return [...books].sort((a, b) => b.updatedAt - a.updatedAt)[0];
   }, [books, pin]);
+  const comicBooks = useMemo(() => books.filter((b) => b.kind === "comic"), [books]);
+  const novelBooks = useMemo(() => books.filter((b) => b.kind !== "comic"), [books]);
+  const comicPageTotal = useMemo(
+    () => comicBooks.reduce((n, b) => n + (b.comicPages ?? 0), 0),
+    [comicBooks],
+  );
+  const currentIsComic = current?.kind === "comic";
 
   const isPinned = Boolean(current && current.path === pin);
   const currentCover = current ? coverFor(current, covers) : undefined;
@@ -521,7 +528,7 @@ export function WorkspaceHome({
     pane === "home"
       ? `${dateText} · ${timeText} · ${weatherText}`
       : pane === "shelf"
-        ? `${books.length} ${t("本")} · ${fmtWords(totalWords)} ${t("字")}`
+        ? `${books.length} ${t("本")} · ${novelBooks.length} ${t("小说")} · ${comicBooks.length} ${t("漫画")}`
         : pane === "stats"
           ? `${t("近 30 天")} · ${fmtWords(sum30)} ${t("字")}`
           : `${notes.length} ${t("条")} · ${t("只存在这台电脑上")}`;
@@ -571,19 +578,21 @@ which === "home" ? (
               <div className="wb-glance-right">
                 <span>{t("连续写作")} <b>{streak}</b> {t("天")}</span>
                 <i />
-                <span>{t("累计")} <b>{fmtWords(totalWords)}</b> {t("字")}</span>
+                <span>{t("作品")} <b>{books.length}</b> {t("本")}</span>
                 <i />
-                <span>Chapter {t("陪你")} <b>{days}</b> {t("天")}</span>
+                <span>{t("小说")} <b>{novelBooks.length}</b> · {t("漫画")} <b>{comicBooks.length}</b> {t("本")}</span>
+                <i />
+                <span>{t("漫画页数")} <b>{comicPageTotal}</b></span>
               </div>
             </div>
 
             <section className="wb-greeting">
-              <p className="wb-eyebrow">{t("今天想写点什么")}</p>
+              <p className="wb-eyebrow">{currentIsComic ? t("今天想画点什么") : t("今天想写点什么")}</p>
               <h1>{t(welcome)}</h1>
               <div className="wb-quick">
                 <button className="btn btn-primary btn-sm" onClick={current ? () => onOpen(current) : onNew}>
-                  <Icon name="edit" size={14} />
-                  {current ? t("继续写") : t("开始写")}
+                  <Icon name={currentIsComic ? "image" : "edit"} size={14} />
+                  {current ? (currentIsComic ? t("继续画") : t("继续写")) : currentIsComic ? t("开始画") : t("开始写")}
                 </button>
                 <button className="btn btn-ghost btn-sm" onClick={onImport}>
                   <Icon name="download" size={14} />
@@ -593,7 +602,7 @@ which === "home" ? (
                   <Icon name="plus" size={14} />
                   {t("新建书")}
                 </button>
-                <button className="btn btn-ghost btn-sm" onClick={onOpenFolder}>
+                <button className="btn btn-ghost btn-sm wb-open-folder" onClick={onOpenFolder}>
                   <Icon name="folder" size={14} />
                   {t("打开工程")}
                 </button>
@@ -646,8 +655,10 @@ which === "home" ? (
                       <div>
                         <h2>{current.title}</h2>
                         <p>
-                          {current.author || t("佚名")} · {current.chapterCount} {t("章")} · {fmtWords(current.words)}{" "}
-                          {t("字")}
+                          {current.author || t("佚名")} ·{" "}
+                          {currentIsComic
+                            ? `${current.chapterCount} ${t("话")} · ${current.comicPages ?? 0} ${t("页")} · ${current.comicPanels ?? 0} ${t("格")}`
+                            : `${current.chapterCount} ${t("章")} · ${fmtWords(current.words)} ${t("字")}`}
                         </p>
                       </div>
                       <button
@@ -659,15 +670,19 @@ which === "home" ? (
                         {isPinned ? t("置顶") : t("置顶")}
                       </button>
                     </div>
-                    <div className="wb-progress">
-                      <i style={{ width: `${Math.min(100, (current.words / Math.max(1, current.targetWords)) * 100)}%` }} />
-                    </div>
+                    {!currentIsComic && (
+                      <div className="wb-progress">
+                        <i style={{ width: `${Math.min(100, (current.words / Math.max(1, current.targetWords)) * 100)}%` }} />
+                      </div>
+                    )}
                     <div className="wb-book-foot">
                       <span>
-                        {t("目标")} {fmtWords(current.targetWords || 200000)} {t("字")}
+                        {currentIsComic
+                          ? `${t("画布")} ${current.comicPages ?? 0} ${t("页")} · ${current.comicBalloons ?? 0} ${t("气泡")}`
+                          : `${t("目标")} ${fmtWords(current.targetWords || 200000)} ${t("字")}`}
                       </span>
                       <button className="link-btn" onClick={() => onOpen(current)}>
-                        {t("继续写")} <Icon name="arrow" size={12} />
+                        {currentIsComic ? t("继续画") : t("继续写")} <Icon name="arrow" size={12} />
                       </button>
                     </div>
                   </>
@@ -733,23 +748,25 @@ which === "home" ? (
                 </div>
                 <div className="wb-cal-summary">
                   <div>
-                    <span>{t("本月字数")}</span>
-                    <b>{fmtWords(monthWords)}</b>
+                    <span>{currentIsComic ? t("本月作画") : t("本月字数")}</span>
+                    <b>{currentIsComic ? `${monthDays} ${t("天")}` : fmtWords(monthWords)}</b>
                   </div>
                   <i />
                   <div>
-                    <span>{t("写作天数")}</span>
-                    <b>{monthDays} {t("天")}</b>
+                    <span>{currentIsComic ? t("漫画页数") : t("写作天数")}</span>
+                    <b>{currentIsComic ? `${comicPageTotal} ${t("页")}` : `${monthDays} ${t("天")}`}</b>
                   </div>
                   <i />
                   <div>
-                    <span>{t("日均")}</span>
-                    <b>{fmtWords(monthDays ? Math.round(monthWords / monthDays) : 0)}</b>
+                    <span>{currentIsComic ? t("连续创作") : t("日均")}</span>
+                    <b>{currentIsComic ? `${streak} ${t("天")}` : fmtWords(monthDays ? Math.round(monthWords / monthDays) : 0)}</b>
                   </div>
                 </div>
                 <div className="cal-foot">
                   <span>
-                    {t("本月")} <b>{fmtWords(monthWords)}</b> {t("字")}
+                    {currentIsComic
+                      ? `${t("本月作画")} ${monthDays} ${t("天")}`
+                      : `${t("本月")} ${fmtWords(monthWords)} ${t("字")}`}
                   </span>
                   <span>
                     {t("连续写作")} <b>{streak}</b> {t("天")}
@@ -757,36 +774,50 @@ which === "home" ? (
                 </div>
               </section>
 
-              <section className="wb-today glow-card">
+              <section className={`wb-today glow-card${currentIsComic ? " is-comic" : ""}`}>
                 <div className="dash-card-head">
                   <h2>{t("今天")}</h2>
                   <span className="dash-sub">
-                    {t("目标")} {fmtWords(goal)} {t("字")}
+                    {currentIsComic ? `${t("漫画")} · ${comicPageTotal} ${t("页")}` : `${t("目标")} ${fmtWords(goal)} ${t("字")}`}
                   </span>
                 </div>
-                <div className="wb-today-main">
-                  <div className="habit-ring" style={{ "--pct": `${pct}%` } as CSSProperties}>
-                    <span>{pct}%</span>
+                {currentIsComic ? (
+                  <div className="wb-comic-today">
+                    <b>{current?.comicPages ?? 0}</b>
+                    <em>{t("页")}</em>
+                    <p>{t("画布已就绪，接着上一页继续。")}</p>
+                    <button className="btn btn-primary btn-sm" onClick={() => current && onOpen(current)}>
+                      <Icon name="image" size={14} />
+                      {t("继续画")}
+                    </button>
                   </div>
-                  <div className="wb-today-text">
-                    <b>{fmtWords(todayWords)}</b>
-                    <em>{t("字")}</em>
-                    <p>{todayWords >= goal ? t("今天的目标完成了。") : `${t("还差")} ${fmtWords(goal - todayWords)} ${t("字")}`}</p>
-                  </div>
-                </div>
-                <div className="week-bars">
-                  {weekBars.map((b) => (
-                    <div key={b.date} className={`week-bar${b.date === today ? " today" : ""}`}>
-                      <span className="bar" style={{ height: `${Math.max(3, (b.value / maxBar) * 54)}px` }} />
-                      <em>{b.label}</em>
+                ) : (
+                  <>
+                    <div className="wb-today-main">
+                      <div className="habit-ring" style={{ "--pct": `${pct}%` } as CSSProperties}>
+                        <span>{pct}%</span>
+                      </div>
+                      <div className="wb-today-text">
+                        <b>{fmtWords(todayWords)}</b>
+                        <em>{t("字")}</em>
+                        <p>{todayWords >= goal ? t("今天的目标完成了。") : `${t("还差")} ${fmtWords(goal - todayWords)} ${t("字")}`}</p>
+                      </div>
                     </div>
-                  ))}
-                </div>
-                <p className="wb-today-note">
-                  {todayWords > 0
-                    ? `${t("今天已经写了")} ${fmtWords(todayWords)} ${t("字")}${streak > 1 ? `，${t("连续")} ${streak} ${t("天")}` : ""}。`
-                    : t("还没落笔。哪怕只写一段，也比空白好。")}
-                </p>
+                    <div className="week-bars">
+                      {weekBars.map((b) => (
+                        <div key={b.date} className={`week-bar${b.date === today ? " today" : ""}`}>
+                          <span className="bar" style={{ height: `${Math.max(3, (b.value / maxBar) * 54)}px` }} />
+                          <em>{b.label}</em>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="wb-today-note">
+                      {todayWords > 0
+                        ? `${t("今天已经写了")} ${fmtWords(todayWords)} ${t("字")}${streak > 1 ? `，${t("连续")} ${streak} ${t("天")}` : ""}。`
+                        : t("还没落笔。哪怕只写一段，也比空白好。")}
+                    </p>
+                  </>
+                )}
               </section>
             </div>
           </main>
@@ -795,7 +826,10 @@ which === "home" ? (
             <div className="wb-pane-head">
               <div>
                 <h1>{t("书架")}</h1>
-                <p>{t("所有作品都在这里；点开封面进入介绍页。")}</p>
+                <p>
+                  {books.length} {t("本")} · {novelBooks.length} {t("小说")} · {comicBooks.length} {t("漫画")} ·{" "}
+                  {comicPageTotal} {t("页")}
+                </p>
               </div>
               <div className="wb-pane-actions">
                 <label className="wb-search">
@@ -889,8 +923,8 @@ which === "home" ? (
                       <p>{b.author || t("佚名")}</p>
                       <span>
                         {b.kind === "comic"
-                          ? `${t("漫画")} · ${relTime(b.updatedAt)}`
-                          : `${b.chapterCount} ${t("章")} · ${fmtWords(b.words)} ${t("字")} · ${relTime(b.updatedAt)}`}
+                          ? `${b.chapterCount} ${t("话")} · ${b.comicPages ?? 0} ${t("页")} · ${b.comicPanels ?? 0} ${t("格")}`
+                          : `${b.chapterCount} ${t("章")} · ${fmtWords(b.words)} ${t("字")}`}
                       </span>
                       {b.seriesId && seriesById.get(b.seriesId) && (
                         <small className="wb-shelf-series">

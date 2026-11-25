@@ -12,6 +12,9 @@ interface Props {
   coverUrl?: string;
   activeId: string | null;
   theme: "light" | "dark";
+  comicPages?: number;
+  comicPanels?: number;
+  comicBalloons?: number;
   onBack: () => void;
   onSelectChapter: (id: string) => void;
   onBookSettings: () => void;
@@ -114,22 +117,45 @@ export function BookIntroPage(props: Props) {
               {meta.description || t("还没有简介，点「书籍设置」写一段。")}
             </p>
             <div className="intro-stats">
-              <span>
-                <b>{fmtWords(total)}</b>
-                {t("字")}
-              </span>
-              <span>
-                <b>{flat.length}</b>
-                {comic ? t("话") : t("章")}
-              </span>
-              <span>
-                <b>{outline.volumes.length}</b>
-                {t("卷")}
-              </span>
-              <span>
-                <b>{meta.targetWords ? `${Math.min(100, Math.round((total / meta.targetWords) * 100))}%` : "0%"}</b>
-                {t("目标")}
-              </span>
+              {comic ? (
+                <>
+                  <span>
+                    <b>{props.comicPages ?? 0}</b>
+                    {t("页")}
+                  </span>
+                  <span>
+                    <b>{flat.length}</b>
+                    {t("话")}
+                  </span>
+                  <span>
+                    <b>{props.comicPanels ?? 0}</b>
+                    {t("格")}
+                  </span>
+                  <span>
+                    <b>{props.comicBalloons ?? 0}</b>
+                    {t("气泡")}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span>
+                    <b>{fmtWords(total)}</b>
+                    {t("字")}
+                  </span>
+                  <span>
+                    <b>{flat.length}</b>
+                    {comic ? t("话") : t("章")}
+                  </span>
+                  <span>
+                    <b>{outline.volumes.length}</b>
+                    {t("卷")}
+                  </span>
+                  <span>
+                    <b>{meta.targetWords ? `${Math.min(100, Math.round((total / meta.targetWords) * 100))}%` : "0%"}</b>
+                    {t("目标")}
+                  </span>
+                </>
+              )}
             </div>
             <div className="intro-actions">
               <button
@@ -200,7 +226,7 @@ export function BookIntroPage(props: Props) {
                       <span className="intro-volume-name">
                         <b>{vol.title || `${t("第")}${vi + 1}${t("卷")}`}</b>
                         <em>
-                          {vol.chapters.length} {t("章")}
+                          {vol.chapters.length} {comic ? t("话") : t("章")}
                         </em>
                       </span>
                       <span className="intro-volume-line" />
@@ -209,7 +235,7 @@ export function BookIntroPage(props: Props) {
                     <div className="intro-volume-fold" aria-hidden={!open}>
                       <div className="intro-volume-inner">
                         {vol.chapters.length === 0 ? (
-                          <div className="intro-chapter-empty">{t("这一卷还没有章节，去写作页新建一章。")}</div>
+                          <div className="intro-chapter-empty">{comic ? t("这一卷还没有画布，去作画页新建一话。") : t("这一卷还没有章节，去写作页新建一章。")}</div>
                         ) : (
                           vol.chapters.map((ch, ci) => (
                             <button
@@ -225,7 +251,7 @@ export function BookIntroPage(props: Props) {
                                 <em>{ch.summary || t("还没有摘要")}</em>
                               </span>
                               <span className="intro-chapter-words">
-                                {fmtWords(ch.words ?? 0)} {t("字")}
+                                {comic ? t("打开画布") : `${fmtWords(ch.words ?? 0)} ${t("字")}`}
                               </span>
                               <Icon name="arrow" size={14} />
                             </button>

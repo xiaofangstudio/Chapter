@@ -19,10 +19,20 @@ import { BrushStudio } from "./BrushStudio";
 import { penPressureOf, penSampleOf } from "../lib/paint/pen";
 import { cloneSurface, createSurface, mustCtx, readPixels } from "../lib/paint/surface";
 import {
+  applyComicFilter,
+  blendOperation,
+  DEFAULT_FILTER_OPTIONS,
+  replaceSurface,
+  type ComicFilterId,
+  type ComicFilterOptions,
+} from "../lib/paint/effects";
+import {
   combineSelection,
   expandSelection,
+  intersectMasks,
   isSelectionEmpty,
   lassoMask,
+  offsetMask,
   rectMask,
   selectionBounds,
   selectionTint,
@@ -32,8 +42,10 @@ import {
 } from "../comic/selection";
 import type {
   ComicBalloon,
+  ComicBlendMode,
   ComicFrame,
   ComicImageItem,
+  ComicJointLayer,
   ComicLayerMeta,
   ComicPage,
   ComicPageFrame,
@@ -49,6 +61,7 @@ import {
   makeDrawnFrame,
   type TemplateFrameDef,
 } from "../comic/templates";
+import { buildJointMask, jointFrameOf, jointGapBridged, jointRect, maskHasPoint } from "../comic/joint";
 import {
   clipFrame,
   framePolygon,
@@ -68,12 +81,59 @@ import {
    真实落盘：comic/project.json + pages/<id>/page.json + layers/*.png
    ══════════════════════════════════════════════════════════ */
 
-type Tool = "select" | "selection" | "brush" | "eraser" | "fill" | "eyedropper" | "balloon" | "panel" | "frame" | "pageframe";
+type Tool =
+  | "select"
+  | "selection"
+  | "brush"
+  | "eraser"
+  | "fill"
+  | "eyedropper"
+  | "balloon"
+  | "panel"
+  | "frame"
+  | "pageframe"
+  | "shape"
+  | "move"
+  | "liquify";
 type SelectionShape = "rect" | "lasso" | "wand";
+type ShapeKind = "rect" | "ellipse" | "line";
 type FocusMode = string | null;
 type SaveState = "saved" | "saving" | "dirty" | "error";
 
 type Point = { x: number; y: number };
+type Rect = { x: number; y: number; w: number; h: number };
+
+const BLEND_MODE_ITEMS: { id: ComicBlendMode; label: string }[] = [
+  { id: "normal", label: "正常" },
+  { id: "multiply", label: "正片叠底" },
+  { id: "screen", label: "滤色" },
+  { id: "overlay", label: "叠加" },
+  { id: "darken", label: "变暗" },
+  { id: "lighten", label: "变亮" },
+  { id: "color-dodge", label: "颜色减淡" },
+  { id: "color-burn", label: "颜色加深" },
+  { id: "hard-light", label: "强光" },
+  { id: "soft-light", label: "柔光" },
+  { id: "difference", label: "差值" },
+  { id: "linear-burn", label: "线性加深" },
+  { id: "linear-dodge", label: "线性减淡" },
+  { id: "linear-light", label: "线性光" },
+  { id: "pin-light", label: "点光" },
+  { id: "hard-mix", label: "实色混合" },
+  { id: "hue", label: "色相" },
+  { id: "saturation", label: "饱和度" },
+  { id: "color", label: "颜色" },
+  { id: "luminosity", label: "明度" },
+];
+
+const FILTER_ITEMS: { id: ComicFilterId; label: string }[] = [
+  { id: "adjust", label: "亮度对比度" },
+  { id: "hue", label: "色相" },
+  { id: "blur", label: "高斯模糊" },
+  { id: "invert", label: "反相" },
+  { id: "edges", label: "查找边缘" },
+  { id: "luma-alpha", label: "亮度转透明" },
+];
 
 type SelectionDraft =
   | { shape: "rect"; a: Point; b: Point; mode: SelectionMode }
@@ -114,6 +174,44 @@ interface StrokeSession {
   layerId: string;
   erase: boolean;
   before: HTMLCanvasElement;
+}
+
+interface ShapeSession {
+  kind: ShapeKind;
+  start: Point;
+  current: Point;
+  constrain: boolean;
+  frameId: string;
+  layerId: string;
+  before: HTMLCanvasElement;
+  preview: HTMLCanvasElement;
+  dirty: Rect | null;
+  lastRect: Rect | null;
+}
+
+interface MoveSession {
+  frameId: string;
+  layerId: string;
+  before: HTMLCanvasElement;
+  base: HTMLCanvasElement;
+  moving: HTMLCanvasElement;
+  start: Point;
+  dx: number;
+  dy: number;
+  selection: boolean;
+}
+
+interface FilterSession {
+  frameId: string;
+  layerId: string;
+  before: HTMLCanvasElement;
+}
+
+interface SelectionClipboard {
+  image: HTMLCanvasElement;
+  x: number;
+  y: number;
+  fromCut: boolean;
 }
 
 type UndoEntry =
@@ -347,6 +445,7 @@ function fillRegion(
   y: number,
   hex: string,
   clip?: HTMLCanvasElement | null,
+  preserveAlpha = false,
 ) {
   const w = canvas.width;
   const h = canvas.height;
@@ -382,11 +481,12 @@ function fillRegion(
       Math.abs(data[p + 2] - target[2]) +
       Math.abs(data[p + 3] - target[3]);
     if (d > tolerance * 4) continue;
-    if (data[p] !== fr || data[p + 1] !== fg || data[p + 2] !== fb || data[p + 3] !== fa) {
+    const nextAlpha = preserveAlpha ? data[p + 3] : fa;
+    if (data[p] !== fr || data[p + 1] !== fg || data[p + 2] !== fb || data[p + 3] !== nextAlpha) {
       data[p] = fr;
       data[p + 1] = fg;
       data[p + 2] = fb;
-      data[p + 3] = fa;
+      if (!preserveAlpha) data[p + 3] = fa;
       changed = true;
     }
     const px = idx % w;
@@ -427,11 +527,22 @@ function snapshotPageLayers(
       if (canvas) out.push({ frameId: frame.id, layerId: layer.id, canvas: cloneSurface(canvas) });
     }
   }
+  for (const joint of page.jointLayers ?? []) {
+    const canvas = map.get(keyOf(joint.id, joint.id));
+    if (canvas) out.push({ frameId: joint.id, layerId: joint.id, canvas: cloneSurface(canvas) });
+  }
   return out;
 }
 
 function keyOf(frameId: string, layerId: string): string {
   return `${frameId}::${layerId}`;
+}
+
+function frameById(page: ComicPage, id: string): ComicFrame | null {
+  const frame = page.frames.find((item) => item.id === id);
+  if (frame) return frame;
+  const joint = page.jointLayers?.find((item) => item.id === id);
+  return joint ? jointFrameOf(joint) : null;
 }
 
 function clonePage(p: ComicPage): ComicPage {
@@ -531,6 +642,7 @@ function pageFrameOf(page: ComicPage): ComicPageFrame {
 
 function ensurePageFrame(page: ComicPage): ComicPage {
   if (!page.pageFrame) page.pageFrame = pageFrameOf(page);
+  if (!page.jointLayers) page.jointLayers = [];
   return page;
 }
 
@@ -673,13 +785,31 @@ function paintFrameContent(
     ctx.globalAlpha = 1;
   }
 
+  let below: HTMLCanvasElement | null = null;
   for (const layer of frame.layers) {
     if (!layer.visible) continue;
     const canvas = layerMap.get(keyOf(frame.id, layer.id));
     if (!canvas) continue;
-    ctx.globalAlpha = clamp(layer.opacity, 0, 1);
-    ctx.drawImage(canvas, fx, fy, fw, fh);
+    // 剪贴蒙版：当前层只保留下一层的不透明像素。先算一张临时图，避免
+    // 直接改图层像素，撤销/继续画时原始内容仍是干净的。
+    if (layer.clipping) {
+      if (!below) continue;
+      const clipped = createSurface(frame.w, frame.h);
+      const cctx = mustCtx(clipped);
+      cctx.drawImage(canvas, 0, 0);
+      cctx.globalCompositeOperation = "destination-in";
+      cctx.drawImage(below, 0, 0);
+      ctx.globalAlpha = clamp(layer.opacity, 0, 1);
+      ctx.globalCompositeOperation = blendOperation(layer.blendMode);
+      ctx.drawImage(clipped, fx, fy, fw, fh);
+    } else {
+      ctx.globalAlpha = clamp(layer.opacity, 0, 1);
+      ctx.globalCompositeOperation = blendOperation(layer.blendMode);
+      ctx.drawImage(canvas, fx, fy, fw, fh);
+    }
     ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = "source-over";
+    below = canvas;
   }
   ctx.restore();
 }
@@ -786,6 +916,27 @@ function drawPage(
 
   for (const frame of page.frames) {
     paintFrameContent(ctx, page, frame, layerMap, assetMap, 0, 0, scale);
+  }
+
+  for (const joint of page.jointLayers ?? []) {
+    const frames = page.frames.filter((frame) => joint.frameIds.includes(frame.id));
+    if (!frames.length) continue;
+    const mask = buildJointMask(frames, joint.rect, joint.crossPanel);
+    const canvas = layerMap.get(keyOf(joint.id, joint.id));
+    drawJointLayerInRect(
+      ctx,
+      joint,
+      canvas,
+      mask,
+      joint.rect.x * scale,
+      joint.rect.y * scale,
+      joint.rect.w * scale,
+      joint.rect.h * scale,
+    );
+  }
+
+  // 格线最后画：跨格笔迹从线框底下穿过去，线始终压在笔迹上。
+  for (const frame of page.frames) {
     ctx.save();
     ctx.strokeStyle = "#17171c";
     ctx.lineWidth = Math.max(1, 5 * scale);
@@ -953,6 +1104,135 @@ function drawPage(
   }
 }
 
+function rectsIntersect(a: Rect, b: Rect): boolean {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function normalizeDirty(dirty: Rect | null, width: number, height: number): Rect | null {
+  if (!dirty) return null;
+  const x0 = Math.max(0, Math.floor(dirty.x));
+  const y0 = Math.max(0, Math.floor(dirty.y));
+  const x1 = Math.min(width, Math.ceil(dirty.x + dirty.w));
+  const y1 = Math.min(height, Math.ceil(dirty.y + dirty.h));
+  if (x1 <= x0 || y1 <= y0) return null;
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+function drawJointLayerInRect(
+  ctx: CanvasRenderingContext2D,
+  layer: ComicJointLayer,
+  layerCanvas: HTMLCanvasElement | undefined,
+  mask: HTMLCanvasElement,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): void {
+  if (!layerCanvas || !layer.visible) return;
+  const clipped = createSurface(mask.width, mask.height);
+  const cctx = mustCtx(clipped);
+  cctx.drawImage(layerCanvas, 0, 0);
+  cctx.globalCompositeOperation = "destination-in";
+  cctx.drawImage(mask, 0, 0);
+  cctx.globalCompositeOperation = "source-over";
+  ctx.save();
+  ctx.globalAlpha = clamp(layer.opacity, 0, 1);
+  ctx.globalCompositeOperation = blendOperation(layer.blendMode);
+  ctx.drawImage(clipped, x, y, w, h);
+  ctx.restore();
+}
+
+function drawJointFocus(
+  ctx: CanvasRenderingContext2D,
+  page: ComicPage,
+  joint: { layer: ComicJointLayer; frames: ComicFrame[]; mask: HTMLCanvasElement },
+  layerMap: Map<string, HTMLCanvasElement>,
+  assetMap: Map<string, HTMLImageElement>,
+  preview: Stroke | null,
+  base: HTMLCanvasElement | null,
+  shapePreview: HTMLCanvasElement | null,
+  dirty: Rect | null,
+  erasePreview: Stroke | null,
+): void {
+  const width = ctx.canvas.width;
+  const height = ctx.canvas.height;
+  const area = normalizeDirty(dirty, width, height);
+  if (area) ctx.clearRect(area.x, area.y, area.w, area.h);
+  else ctx.clearRect(0, 0, width, height);
+  const rect = joint.layer.rect;
+
+  ctx.save();
+  if (area) {
+    ctx.beginPath();
+    ctx.rect(area.x, area.y, area.w, area.h);
+    ctx.clip();
+  }
+  if (base) {
+    ctx.drawImage(base, 0, 0);
+  } else {
+    ctx.fillStyle = "#e9e3d8";
+    ctx.fillRect(0, 0, width, height);
+    const content = createSurface(width, height, "#ffffff");
+    const cctx = mustCtx(content);
+    for (const frame of joint.frames) {
+      paintFrameContent(cctx, page, frame, layerMap, assetMap, -rect.x, -rect.y, 1);
+    }
+    cctx.globalCompositeOperation = "destination-in";
+    cctx.drawImage(joint.mask, 0, 0);
+    cctx.globalCompositeOperation = "source-over";
+    ctx.drawImage(content, 0, 0);
+    drawJointLayerInRect(
+      ctx,
+      joint.layer,
+      layerMap.get(keyOf(joint.layer.id, joint.layer.id)),
+      joint.mask,
+      0,
+      0,
+      rect.w,
+      rect.h,
+    );
+  }
+
+  if (preview || shapePreview) {
+    ctx.save();
+    if (shapePreview) {
+      const clipped = createSurface(width, height);
+      const sctx = mustCtx(clipped);
+      sctx.drawImage(shapePreview, 0, 0);
+      sctx.globalCompositeOperation = "destination-in";
+      sctx.drawImage(joint.mask, 0, 0);
+      sctx.globalCompositeOperation = "source-over";
+      ctx.drawImage(clipped, 0, 0);
+    }
+    if (preview) ctx.drawImage(preview.buffer, 0, 0);
+    ctx.restore();
+  }
+  if (erasePreview) {
+    // 笔迹本身已经按 mask 裁过；这里只把缓冲从底图上擦掉。
+    ctx.save();
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.drawImage(erasePreview.buffer, 0, 0);
+    ctx.restore();
+  }
+
+  for (const frame of joint.frames) {
+    ctx.save();
+    polygonPath(ctx, frame, 1, -rect.x, -rect.y);
+    ctx.strokeStyle = "rgba(23,23,28,.55)";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  for (const balloon of page.balloons) {
+    const br: Rect = { x: balloon.x - rect.x, y: balloon.y - rect.y, w: balloon.w, h: balloon.h };
+    if (!rectsIntersect(br, { x: 0, y: 0, w: width, h: height })) continue;
+    if (area && !rectsIntersect(area, br)) continue;
+    drawBalloon(ctx, balloon, -rect.x, -rect.y, 1);
+  }
+  ctx.restore();
+}
+
 function drawFocus(
   ctx: CanvasRenderingContext2D,
   page: ComicPage,
@@ -961,28 +1241,75 @@ function drawFocus(
   assetMap: Map<string, HTMLImageElement>,
   preview: Stroke | null,
   base: HTMLCanvasElement | null,
+  shapePreview: HTMLCanvasElement | null = null,
+  dirty: Rect | null = null,
+  erasePreview: Stroke | null = null,
+  joint?: { layer: ComicJointLayer; frames: ComicFrame[]; mask: HTMLCanvasElement },
 ): void {
-  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  if (joint) {
+    drawJointFocus(
+      ctx,
+      page,
+      joint,
+      layerMap,
+      assetMap,
+      preview,
+      base,
+      shapePreview,
+      dirty,
+      erasePreview,
+    );
+    return;
+  }
+  const width = ctx.canvas.width;
+  const height = ctx.canvas.height;
+  const area = normalizeDirty(dirty, width, height);
+  if (area) ctx.clearRect(area.x, area.y, area.w, area.h);
+  else ctx.clearRect(0, 0, width, height);
+
+  ctx.save();
+  if (area) {
+    ctx.beginPath();
+    ctx.rect(area.x, area.y, area.w, area.h);
+    ctx.clip();
+  }
   if (base) {
     // 落笔中只把缓存的底图铺一次，不再逐帧重画所有图层。
     ctx.drawImage(base, 0, 0);
   } else {
     ctx.fillStyle = "#e9e3d8";
-    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    ctx.fillRect(0, 0, width, height);
     ctx.save();
     clipFrame(ctx, frame, 1, -frame.x, -frame.y);
     ctx.clip();
     ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    ctx.fillRect(0, 0, width, height);
     paintFrameContent(ctx, page, frame, layerMap, assetMap, -frame.x, -frame.y, 1);
     ctx.restore();
   }
-  ctx.save();
-  clipFrame(ctx, frame, 1, -frame.x, -frame.y);
-  ctx.clip();
-  if (preview) {
-    ctx.globalAlpha = 1;
-    ctx.drawImage(preview.buffer, 0, 0);
+  if (shapePreview || preview) {
+    ctx.save();
+    clipFrame(ctx, frame, 1, -frame.x, -frame.y);
+    ctx.clip();
+    if (shapePreview) {
+      ctx.globalAlpha = 1;
+      ctx.drawImage(shapePreview, 0, 0);
+    }
+    if (preview) {
+      ctx.globalAlpha = 1;
+      ctx.drawImage(preview.buffer, 0, 0);
+    }
+    ctx.restore();
+  }
+  if (erasePreview) {
+    // 橡皮拖动时在缓存的底图上直接抠掉笔画缓冲，看到的就是实时擦除，
+    // 而不是等抬笔才突然消失。
+    ctx.save();
+    clipFrame(ctx, frame, 1, -frame.x, -frame.y);
+    ctx.clip();
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.drawImage(erasePreview.buffer, 0, 0);
+    ctx.restore();
   }
   const center = polygonCenter(frame);
   for (const b of page.balloons) {
@@ -992,14 +1319,19 @@ function drawFocus(
       b.frameId === frame.id ||
       pointInFrame(frame, { x: bx, y: by }) ||
       Math.hypot(bx - center.x, by - center.y) < Math.max(frame.w, frame.h) * 0.35;
-    if (inFrame) drawBalloon(ctx, b, -frame.x, -frame.y, 1);
+    if (!inFrame) continue;
+    if (area) {
+      const br: Rect = { x: b.x - frame.x, y: b.y - frame.y, w: b.w, h: b.h };
+      if (!rectsIntersect(area, br)) continue;
+    }
+    drawBalloon(ctx, b, -frame.x, -frame.y, 1);
   }
-  ctx.restore();
   ctx.save();
   polygonPath(ctx, frame, 1, -frame.x, -frame.y);
   ctx.strokeStyle = "rgba(23,23,28,.55)";
   ctx.lineWidth = 2;
   ctx.stroke();
+  ctx.restore();
   ctx.restore();
 }
 
@@ -1007,14 +1339,27 @@ function drawSelectionHint(
   ctx: CanvasRenderingContext2D,
   tint: HTMLCanvasElement | null,
   bounds: SelectionBounds | null,
+  area: Rect | null = null,
 ): void {
   ctx.save();
+  if (area) {
+    ctx.beginPath();
+    ctx.rect(area.x, area.y, area.w, area.h);
+    ctx.clip();
+  }
   if (tint) {
     ctx.globalAlpha = 0.2;
     ctx.drawImage(tint, 0, 0);
     ctx.globalAlpha = 1;
   }
   if (bounds) {
+    if (area) {
+      const br: Rect = { x: bounds.x, y: bounds.y, w: bounds.width, h: bounds.height };
+      if (!rectsIntersect(area, br)) {
+        ctx.restore();
+        return;
+      }
+    }
     // 白色虚线打底、橙色虚线压上：无论底下是黑线、红块还是纸白，边界都看得见。
     const x = bounds.x + 1;
     const y = bounds.y + 1;
@@ -1074,15 +1419,100 @@ function drawSelectionDraft(ctx: CanvasRenderingContext2D, draft: SelectionDraft
   ctx.restore();
 }
 
+/** 图形工具：矩形 / 椭圆 / 直线，按住 Shift 约束成正方形、正圆或 45° 线。 */
+function drawShapePath(
+  ctx: CanvasRenderingContext2D,
+  kind: ShapeKind,
+  a: Point,
+  b: Point,
+  color: string,
+  size: number,
+  opacity: number,
+  constrain: boolean,
+): void {
+  let end = b;
+  if (constrain) {
+    if (kind === "line") {
+      const angle = Math.round(Math.atan2(b.y - a.y, b.x - a.x) / (Math.PI / 4)) * (Math.PI / 4);
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      end = { x: a.x + Math.cos(angle) * len, y: a.y + Math.sin(angle) * len };
+    } else {
+      const side = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+      end = {
+        x: a.x + Math.sign(b.x - a.x || 1) * side,
+        y: a.y + Math.sign(b.y - a.y || 1) * side,
+      };
+    }
+  }
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.globalAlpha = clamp(opacity, 0, 1);
+  ctx.lineWidth = Math.max(1, size);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  if (kind === "line") {
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(end.x, end.y);
+    ctx.stroke();
+  } else if (kind === "rect") {
+    ctx.beginPath();
+    ctx.rect(
+      Math.min(a.x, end.x),
+      Math.min(a.y, end.y),
+      Math.abs(end.x - a.x),
+      Math.abs(end.y - a.y),
+    );
+    ctx.stroke();
+  } else {
+    const cx = (a.x + end.x) / 2;
+    const cy = (a.y + end.y) / 2;
+    const rx = Math.abs(end.x - a.x) / 2;
+    const ry = Math.abs(end.y - a.y) / 2;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, Math.max(1, rx), Math.max(1, ry), 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 /** 落笔期间的主笔底图：背景 + 当前全部图层，一次性缓存。 */
 function buildFocusBase(
   page: ComicPage,
   frame: ComicFrame,
   layerMap: Map<string, HTMLCanvasElement>,
   assetMap: Map<string, HTMLImageElement>,
+  joint?: { layer: ComicJointLayer; frames: ComicFrame[]; mask: HTMLCanvasElement },
 ): HTMLCanvasElement {
   const canvas = createSurface(frame.w, frame.h, "#e9e3d8");
   const ctx = mustCtx(canvas);
+  if (joint) {
+    const content = createSurface(frame.w, frame.h, "#ffffff");
+    const cctx = mustCtx(content);
+    for (const item of joint.frames) {
+      paintFrameContent(cctx, page, item, layerMap, assetMap, -frame.x, -frame.y, 1);
+    }
+    cctx.globalCompositeOperation = "destination-in";
+    cctx.drawImage(joint.mask, 0, 0);
+    cctx.globalCompositeOperation = "source-over";
+    ctx.drawImage(content, 0, 0);
+    const jointCanvas = layerMap.get(keyOf(joint.layer.id, joint.layer.id));
+    if (jointCanvas && joint.layer.visible) {
+      const clipped = createSurface(frame.w, frame.h);
+      const lctx = mustCtx(clipped);
+      lctx.drawImage(jointCanvas, 0, 0);
+      lctx.globalCompositeOperation = "destination-in";
+      lctx.drawImage(joint.mask, 0, 0);
+      lctx.globalCompositeOperation = "source-over";
+      ctx.globalAlpha = clamp(joint.layer.opacity, 0, 1);
+      ctx.globalCompositeOperation = blendOperation(joint.layer.blendMode);
+      ctx.drawImage(clipped, 0, 0);
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = "source-over";
+    }
+    return canvas;
+  }
   ctx.save();
   clipFrame(ctx, frame, 1, -frame.x, -frame.y);
   ctx.clip();
@@ -1118,6 +1548,7 @@ export function ComicWorkspace({
   const [selectedFrames, setSelectedFramesState] = useState<string[]>([]);
   const [selectedBalloon, setSelectedBalloonState] = useState<string | null>(null);
   const [focusId, setFocusIdState] = useState<FocusMode>(null);
+  const [focusGroup, setFocusGroupState] = useState<string[]>([]);
   const [activeLayerId, setActiveLayerIdState] = useState<string | null>(null);
   const [tool, setToolState] = useState<Tool>("select");
   const [brush, setBrushState] = useState<BrushSettings>({
@@ -1136,6 +1567,10 @@ export function ComicWorkspace({
   const [status, setStatus] = useState("正在打开漫画工程…");
   const [busy, setBusy] = useState(true);
   const [panelTab, setPanelTab] = useState<"layers" | "page" | "assets">("layers");
+  const [brushSectionOpen, setBrushSectionOpen] = useState(false);
+  const [mobileInspector, setMobileInspector] = useState(false);
+  const [mobilePages, setMobilePages] = useState(false);
+  const [mobileMulti, setMobileMulti] = useState(false);
   const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const [draftPoints, setDraftPoints] = useState<Point[]>([]);
   const [textEdit, setTextEdit] = useState<{
@@ -1163,10 +1598,20 @@ export function ComicWorkspace({
   const [brushPanelOpen, setBrushPanelOpen] = useState(false);
   const [selectionShape, setSelectionShape] = useState<SelectionShape>("rect");
   const [selectionMenuOpen, setSelectionMenuOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [shapeKind, setShapeKindState] = useState<ShapeKind>("rect");
+  const [shapeConstrain, setShapeConstrain] = useState(false);
+  const [liquifyRadius, setLiquifyRadius] = useState(58);
+  const [liquifyStrength, setLiquifyStrength] = useState(55);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filterId, setFilterId] = useState<ComicFilterId>("adjust");
+  const [filterOptions, setFilterOptions] = useState<ComicFilterOptions>(DEFAULT_FILTER_OPTIONS);
+  const [hasClipboard, setHasClipboard] = useState(false);
   const [selection, setSelectionState] = useState<HTMLCanvasElement | null>(null);
   const [selectionTolerance, setSelectionTolerance] = useState(28);
   const [selectionExpand, setSelectionExpand] = useState(0);
   const [selectionContiguous, setSelectionContiguous] = useState(true);
+  const [selectionCombine, setSelectionCombine] = useState<SelectionMode>("new");
   const [paletteColors, setPaletteColors] = useState<string[]>(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(PALETTE_COLORS_KEY) ?? "[]");
@@ -1189,6 +1634,22 @@ export function ComicWorkspace({
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [fitScale, setFitScale] = useState(1);
   const [focusFit, setFocusFit] = useState(1);
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window === "undefined" ? false : window.matchMedia("(max-width: 820px)").matches,
+  );
+  const [mobileZoomOpen, setMobileZoomOpen] = useState(false);
+  const pagePressRef = useRef<{ id: string; timer: number } | null>(null);
+  const pagePressFiredRef = useRef(false);
+  const palettePressRef = useRef<{ id: string; timer: number } | null>(null);
+  const palettePressFiredRef = useRef(false);
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 820px)");
+    const sync = () => setIsMobile(query.matches);
+    sync();
+    query.addEventListener?.("change", sync);
+    return () => query.removeEventListener?.("change", sync);
+  }, []);
 
   const visiblePages = useMemo(
     () =>
@@ -1210,6 +1671,22 @@ export function ComicWorkspace({
   const paperFitRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const strokeRef = useRef<StrokeSession | null>(null);
+  const strokeDirtyRef = useRef<Rect | null>(null);
+  const strokeLastPointRef = useRef<Point | null>(null);
+  const liquifySessionRef = useRef<{
+    frameId: string;
+    layerId: string;
+    before: HTMLCanvasElement;
+    canvas: HTMLCanvasElement;
+    last: Point;
+    moved: boolean;
+    mask: HTMLCanvasElement | null;
+  } | null>(null);
+  const shapeSessionRef = useRef<ShapeSession | null>(null);
+  const moveSessionRef = useRef<MoveSession | null>(null);
+  const filterSessionRef = useRef<FilterSession | null>(null);
+  const clipboardRef = useRef<SelectionClipboard | null>(null);
+  const renderPerfRef = useRef({ renders: 0, total: 0, max: 0, last: 0 });
   const selectionRef = useRef<HTMLCanvasElement | null>(null);
   const selectionCoreRef = useRef<HTMLCanvasElement | null>(null);
   const selectionTintRef = useRef<HTMLCanvasElement | null>(null);
@@ -1221,6 +1698,9 @@ export function ComicWorkspace({
   const selectedFramesRef = useRef<string[]>([]);
   const selectedBalloonRef = useRef<string | null>(null);
   const focusRef = useRef<string | null>(null);
+  const focusGroupRef = useRef<string[]>([]);
+  const focusFrameRef = useRef<ComicFrame | null>(null);
+  const jointMaskRef = useRef<HTMLCanvasElement | null>(null);
   const activeLayerRef = useRef<string | null>(null);
   const toolRef = useRef<Tool>("select");
   const marqueeRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -1232,16 +1712,19 @@ export function ComicWorkspace({
   const rafRef = useRef<number | null>(null);
   const textEditRef = useRef(textEdit);
   const brushRef = useRef(brush);
+  const shapeKindRef = useRef<ShapeKind>(shapeKind);
   const pathRef = useRef(path);
   const pageIdRef = useRef<string | null>(null);
   const textBeforeRef = useRef<ComicPage | null>(null);
 
   textEditRef.current = textEdit;
   brushRef.current = brush;
+  shapeKindRef.current = shapeKind;
   pathRef.current = path;
   (window as unknown as { __comicDebug?: unknown }).__comicDebug = {
     layerMap,
     pageRef,
+    perf: renderPerfRef,
   };
 
   const setSelectedFrames = useCallback((ids: string[]) => {
@@ -1254,9 +1737,12 @@ export function ComicWorkspace({
     setSelectedBalloonState(id);
   }, []);
 
-  const setFocus = useCallback((id: FocusMode) => {
+  const setFocus = useCallback((id: FocusMode, group?: string[]) => {
+    const ids = group ?? (id ? [id] : []);
     focusRef.current = id;
+    focusGroupRef.current = ids;
     setFocusIdState(id);
+    setFocusGroupState(ids);
     selectionRef.current = null;
     selectionCoreRef.current = null;
     selectionTintRef.current = null;
@@ -1331,6 +1817,9 @@ export function ComicWorkspace({
       for (const f of p.frames) {
         for (const l of f.layers) getLayer(f, l.id);
       }
+      for (const joint of p.jointLayers ?? []) {
+        getLayer(jointFrameOf(joint), joint.id);
+      }
     },
     [getLayer],
   );
@@ -1338,26 +1827,63 @@ export function ComicWorkspace({
   const renderNow = useCallback(() => {
     const p = pageRef.current;
     if (!p) return;
+    const started = performance.now();
     const focus = focusRef.current;
     if (focus) {
-      const frame = p.frames.find((f) => f.id === focus);
+      const jointLayer = p.jointLayers?.find((item) => item.id === focus) ?? null;
+      if (jointLayer && !jointMaskRef.current) {
+        jointMaskRef.current = buildJointMask(
+          p.frames.filter((item) => jointLayer.frameIds.includes(item.id)),
+          jointLayer.rect,
+          jointLayer.crossPanel,
+        );
+      }
+      const joint =
+        jointLayer && jointMaskRef.current
+          ? {
+              layer: jointLayer,
+              frames: p.frames.filter((item) => jointLayer.frameIds.includes(item.id)),
+              mask: jointMaskRef.current,
+            }
+          : undefined;
+      const frame = joint ? jointFrameOf(joint.layer) : p.frames.find((f) => f.id === focus);
       const canvas = focusCanvasRef.current;
       if (!frame || !canvas) return;
       if (canvas.width !== Math.round(frame.w) || canvas.height !== Math.round(frame.h)) {
         canvas.width = Math.round(frame.w);
         canvas.height = Math.round(frame.h);
       }
+      const strokeSession = strokeRef.current;
+      const shapeSession = shapeSessionRef.current;
+      // 只有「底图已经缓存」的连续落笔才走脏矩形；点下去的第一帧、收笔
+      // 之后的合成都走全量，保证边界和气泡不会被切掉。
+      const area = strokeSession
+        ? strokeDirtyRef.current
+        : shapeSession
+          ? shapeSession.dirty
+          : null;
       drawFocus(
         mustCtx(canvas),
         p,
         frame,
         layerMap.current,
         assetMap.current,
-        strokeRef.current && !strokeRef.current.erase ? strokeRef.current.stroke : null,
-        strokeRef.current ? focusBaseRef.current : null,
+        strokeSession && !strokeSession.erase ? strokeSession.stroke : null,
+        strokeSession ? focusBaseRef.current : shapeSession ? focusBaseRef.current : null,
+        shapeSession?.preview ?? null,
+        area,
+        strokeSession?.erase ? strokeSession.stroke : null,
+        joint,
       );
-      drawSelectionHint(mustCtx(canvas), selectionTintRef.current, selectionBoundsRef.current);
+      drawSelectionHint(
+        mustCtx(canvas),
+        selectionTintRef.current,
+        selectionBoundsRef.current,
+        area,
+      );
       drawSelectionDraft(mustCtx(canvas), selectionDraftRef.current);
+      if (strokeSession) strokeDirtyRef.current = null;
+      if (shapeSession) shapeSession.dirty = null;
     } else {
       const canvas = pageCanvasRef.current;
       if (!canvas) return;
@@ -1375,6 +1901,12 @@ export function ComicWorkspace({
         guides: guidesRef.current,
       });
     }
+    const elapsed = performance.now() - started;
+    const perf = renderPerfRef.current;
+    perf.renders += 1;
+    perf.last = elapsed;
+    perf.total += elapsed;
+    if (elapsed > perf.max) perf.max = elapsed;
   }, []);
 
   const scheduleRender = useCallback(() => {
@@ -1436,7 +1968,7 @@ export function ComicWorkspace({
   }, [scheduleRender, selectionExpand]);
 
   const invertSelection = useCallback(() => {
-    const frame = pageRef.current?.frames.find((f) => f.id === focusRef.current);
+    const frame = focusFrameRef.current;
     if (!frame) return;
     const whole = rectMask(frame.w, frame.h, { x: 0, y: 0 }, { x: frame.w, y: frame.h });
     const out = selectionRef.current
@@ -1457,7 +1989,7 @@ export function ComicWorkspace({
   }, [clearSelection, scheduleRender]);
 
   const selectAll = useCallback(() => {
-    const frame = pageRef.current?.frames.find((f) => f.id === focusRef.current);
+    const frame = focusFrameRef.current;
     if (!frame) return;
     commitSelection(rectMask(frame.w, frame.h, { x: 0, y: 0 }, { x: frame.w, y: frame.h }), "new");
   }, [commitSelection]);
@@ -1567,6 +2099,12 @@ export function ComicWorkspace({
           }
         }
       }
+      for (const joint of p.jointLayers ?? []) {
+        const canvas = layerMap.current.get(keyOf(joint.id, joint.id));
+        if (canvas) {
+          layers.push({ id: joint.id, dataUrl: canvas.toDataURL("image/png") });
+        }
+      }
       const next = { ...p, updatedAt: Date.now() };
       pageRef.current = next;
       await api.comicSavePage(pathRef.current, p.id, JSON.stringify(next), layers);
@@ -1605,6 +2143,88 @@ export function ComicWorkspace({
     }, 1800);
   }, [savePage]);
 
+  const openJointFocus = useCallback(
+    (frameIds: string[]) => {
+      const p = pageRef.current;
+      const ids = Array.from(new Set(frameIds));
+      if (!p || ids.length < 2) return;
+      const frames = p.frames.filter((frame) => ids.includes(frame.id));
+      if (frames.length < 2) return;
+      const rect = jointRect(frames);
+      if (!rect) return;
+      const same = (joint: ComicJointLayer) =>
+        joint.frameIds.length === ids.length && ids.every((id) => joint.frameIds.includes(id));
+      let joint = p.jointLayers?.find(same) ?? null;
+      if (!joint) {
+        joint = {
+          id: uid("j"),
+          name: "跨格线稿",
+          frameIds: ids,
+          rect,
+          crossPanel: false,
+          visible: true,
+          opacity: 1,
+          locked: false,
+          createdAt: Date.now(),
+        };
+        const next = clonePage(p);
+        next.jointLayers = [...(next.jointLayers ?? []), joint];
+        getLayer(jointFrameOf(joint), joint.id);
+        commitPage(next);
+      }
+      setFocus(joint.id, ids);
+      setActiveLayer(joint.id);
+      setSelectedBalloon(null);
+      setSelectedFrames(ids);
+      setTool("brush");
+      setMobileMulti(false);
+      setStatus(`已进入 ${ids.length} 格并集 · 打开「跨格连画」可画进格缝`);
+      scheduleRender();
+      scheduleSave();
+    },
+    [
+      commitPage,
+      getLayer,
+      scheduleRender,
+      scheduleSave,
+      setActiveLayer,
+      setFocus,
+      setSelectedBalloon,
+      setSelectedFrames,
+      setTool,
+    ],
+  );
+
+  const toggleCrossPanel = useCallback(() => {
+    const p = pageRef.current;
+    const joint = p?.jointLayers?.find((item) => item.id === focusRef.current);
+    if (!p || !joint) return;
+    const next = clonePage(p);
+    const target = next.jointLayers?.find((item) => item.id === joint.id);
+    if (!target) return;
+    target.crossPanel = !target.crossPanel;
+    const jointFrames = target.frameIds
+      .map((id) => p.frames.find((frame) => frame.id === id))
+      .filter((frame): frame is NonNullable<typeof frame> => Boolean(frame));
+    jointMaskRef.current = buildJointMask(jointFrames, target.rect, target.crossPanel);
+    commitPage(next);
+    const bridged =
+      target.crossPanel &&
+      (() => {
+        const frames = target.frameIds
+          .map((id) => p.frames.find((frame) => frame.id === id))
+          .filter((frame): frame is NonNullable<typeof frame> => Boolean(frame));
+        return jointGapBridged(frames, target.rect);
+      })();
+    if (target.crossPanel && !bridged) {
+      setStatus("已打开跨格连画，但格间距超过 160px，格缝暂未桥接；把格拉近些再试");
+    } else {
+      setStatus(target.crossPanel ? "跨格连画已打开：笔迹可以穿过格缝" : "跨格连画已关闭：格缝不可画");
+    }
+    scheduleSave();
+    scheduleRender();
+  }, [commitPage, scheduleRender, scheduleSave]);
+
   const adoptPage = useCallback(
     async (payload: ComicPagePayload, resetHistory = true) => {
       const parsed = ensurePageFrame(JSON.parse(payload.json) as ComicPage);
@@ -1630,11 +2250,13 @@ export function ComicWorkspace({
       await Promise.all(
         payload.layers.map(async (layer) => {
           const frame = parsed.frames.find((f) => f.layers.some((l) => l.id === layer.id));
-          if (!frame) return;
+          const joint = parsed.jointLayers?.find((item) => item.id === layer.id);
+          const target = frame ?? (joint ? jointFrameOf(joint) : null);
+          if (!target) return;
           try {
             const img = await loadImage(layer.dataUrl);
-            const canvas = getLayer(frame, layer.id);
-            mustCtx(canvas).drawImage(img, 0, 0, frame.w, frame.h);
+            const canvas = getLayer(target, layer.id);
+            mustCtx(canvas).drawImage(img, 0, 0, target.w, target.h);
           } catch {
             // 单张图层坏了不拖垮整页，空图层继续可画。
           }
@@ -1725,13 +2347,14 @@ export function ComicWorkspace({
       const stage = stageRef.current;
       const p = pageRef.current;
       if (!stage || !p) return;
-      const w = Math.max(120, stage.clientWidth - 110);
-      const h = Math.max(120, stage.clientHeight - 158);
+      const compact = window.matchMedia("(max-width: 820px)").matches;
+      const w = Math.max(120, stage.clientWidth - (compact ? 20 : 110));
+      const h = Math.max(120, stage.clientHeight - (compact ? 150 : 158));
       setFitScale(Math.min(w / p.width, h / p.height, 1.35));
-      const frame = p.frames.find((f) => f.id === focusRef.current);
+      const frame = focusFrameRef.current;
       if (frame) {
-        const fw = Math.max(120, stage.clientWidth - 120);
-        const fh = Math.max(120, stage.clientHeight - 188);
+        const fw = Math.max(120, stage.clientWidth - (compact ? 24 : 120));
+        const fh = Math.max(120, stage.clientHeight - (compact ? 150 : 188));
         setFocusFit(Math.min(fw / frame.w, fh / frame.h, 3.2));
       }
     };
@@ -1747,14 +2370,39 @@ export function ComicWorkspace({
 
   useEffect(() => {
     scheduleRender();
-  }, [selectedFrames, selectedBalloon, page, focusId, marquee, scheduleRender]);
+  }, [selectedFrames, selectedBalloon, page, focusId, marquee, busy, scheduleRender]);
+
+  const focusJoint = useMemo(() => {
+    if (!page || !focusId) return null;
+    return page.jointLayers?.find((joint) => joint.id === focusId) ?? null;
+  }, [page, focusId]);
+
+  const focusFrames = useMemo(() => {
+    if (!page || !focusId) return [];
+    const ids = focusJoint?.frameIds ?? focusGroup;
+    return page.frames.filter((frame) => ids.includes(frame.id));
+  }, [focusGroup, focusId, focusJoint, page]);
+
+  const focusFrame = useMemo(() => {
+    if (focusJoint) return jointFrameOf(focusJoint);
+    if (!page || !focusId) return null;
+    return page.frames.find((frame) => frame.id === focusId) ?? null;
+  }, [focusId, focusJoint, page]);
+
+  const focusMask = useMemo(() => {
+    if (!focusJoint) return null;
+    return buildJointMask(focusFrames, focusJoint.rect, focusJoint.crossPanel);
+  }, [focusFrames, focusJoint]);
+
+  focusFrameRef.current = focusFrame;
+  jointMaskRef.current = focusMask;
 
   const activeFrame = useMemo(() => {
+    if (focusFrame) return focusFrame;
     if (!page) return null;
-    if (focusId) return page.frames.find((f) => f.id === focusId) ?? null;
     const id = selectedFrames[0];
-    return id ? page.frames.find((f) => f.id === id) ?? null : null;
-  }, [focusId, page, selectedFrames]);
+    return id ? page.frames.find((frame) => frame.id === id) ?? null : null;
+  }, [focusFrame, page, selectedFrames]);
 
   const activeLayer = useMemo(() => {
     if (!activeFrame) return null;
@@ -1862,6 +2510,330 @@ export function ComicWorkspace({
     scheduleRender();
   }, [commitPage, getLayer, makeThumb, scheduleRender, scheduleSave]);
 
+  /* ───────── 画世界 Pro 式高级工具 ───────── */
+
+  const paintMaskForLayer = useCallback(
+    (
+      frame: ComicFrame,
+      meta: ComicLayerMeta,
+      canvas: HTMLCanvasElement,
+    ): HTMLCanvasElement | null => {
+      let mask = selectionRef.current;
+      if (frame.id === meta.id && jointMaskRef.current) {
+        mask = mask ? intersectMasks(mask, jointMaskRef.current) : jointMaskRef.current;
+        if (meta.alphaLocked) mask = intersectMasks(mask, cloneSurface(canvas));
+        return mask;
+      }
+      if (meta.alphaLocked) {
+        // 锁定透明：用画布 alpha 当遮罩，必须先 clone，否则会拿正在变的画布
+        // 反过来裁自己。
+        mask = intersectMasks(mask, cloneSurface(canvas));
+      }
+      if (meta.clipping) {
+        const idx = frame.layers.findIndex((l) => l.id === meta.id);
+        for (let i = idx - 1; i >= 0; i -= 1) {
+          const below = frame.layers[i];
+          if (!below.visible) continue;
+          const belowCanvas = layerMap.current.get(keyOf(frame.id, below.id));
+          if (belowCanvas) {
+            mask = intersectMasks(mask, cloneSurface(belowCanvas));
+            break;
+          }
+        }
+        if (!mask || isSelectionEmpty(mask)) {
+          // 没有下层像素时剪贴层什么也不显示。
+          return createSurface(frame.w, frame.h);
+        }
+      }
+      return mask;
+    },
+    [],
+  );
+
+  const copyActiveSelection = useCallback(
+    (cut: boolean) => {
+      const p = pageRef.current;
+      const frame = focusFrameRef.current;
+      const meta = frame?.layers.find((l) => l.id === activeLayerRef.current) ?? frame?.layers[0];
+      if (!p || !frame || !meta) {
+        setStatus("先双击一个格进入聚焦，再复制选区");
+        return;
+      }
+      if (cut && meta.locked) {
+        setStatus("当前图层已锁定");
+        return;
+      }
+      const canvas = getLayer(frame, meta.id);
+      const mask = selectionRef.current;
+      const bounds = mask
+        ? selectionBounds(mask)
+        : { x: 0, y: 0, width: frame.w, height: frame.h };
+      if (!bounds) {
+        setStatus("选区是空的");
+        return;
+      }
+      const clip = createSurface(bounds.width, bounds.height);
+      const cctx = mustCtx(clip);
+      cctx.drawImage(canvas, -bounds.x, -bounds.y);
+      if (mask) {
+        cctx.globalCompositeOperation = "destination-in";
+        cctx.drawImage(mask, -bounds.x, -bounds.y);
+        cctx.globalCompositeOperation = "source-over";
+      }
+      clipboardRef.current = { image: clip, x: bounds.x, y: bounds.y, fromCut: cut };
+      setHasClipboard(true);
+      if (cut) {
+        const before = cloneSurface(canvas);
+        const ctx = mustCtx(canvas);
+        if (mask) {
+          ctx.globalCompositeOperation = "destination-out";
+          ctx.drawImage(mask, 0, 0);
+          ctx.globalCompositeOperation = "source-over";
+        } else {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+        pushUndo({
+          kind: "stroke",
+          frameId: frame.id,
+          layerId: meta.id,
+          before,
+          after: cloneSurface(canvas),
+        });
+        scheduleSave();
+        scheduleRender();
+        setStatus("已剪切选区内容");
+      } else {
+        setStatus("已复制选区内容，可从汉堡菜单粘贴成新图层");
+      }
+    },
+    [getLayer, pushUndo, scheduleRender, scheduleSave],
+  );
+
+  const copySelection = useCallback(() => copyActiveSelection(false), [copyActiveSelection]);
+  const cutActiveSelection = useCallback(() => copyActiveSelection(true), [copyActiveSelection]);
+
+  const pasteClipboard = useCallback(() => {
+    const clip = clipboardRef.current;
+    const p = pageRef.current;
+    const frame = focusFrameRef.current;
+    if (!clip || !p || !frame) {
+      setStatus("剪切板是空的，先复制一个选区");
+      return;
+    }
+    if (p.jointLayers?.some((joint) => joint.id === frame.id)) {
+      setStatus("跨格线稿暂不支持粘贴；退出多格后可在单格图层粘贴");
+      return;
+    }
+    const before = clonePage(p);
+    const beforeLayers = snapshotPageLayers(p, layerMap.current);
+    const meta: ComicLayerMeta = {
+      id: uid("l"),
+      name: "粘贴",
+      kind: "raster",
+      visible: true,
+      opacity: 1,
+      locked: false,
+    };
+    const target = getLayer(frame, meta.id);
+    mustCtx(target).drawImage(clip.image, clip.x, clip.y);
+    const next = clonePage(p);
+    const nextFrame = next.frames.find((f) => f.id === frame.id);
+    nextFrame?.layers.push(meta);
+    setActiveLayer(meta.id);
+    commitPage(next);
+    const afterLayers = snapshotPageLayers(next, layerMap.current);
+    pushUndo({
+      kind: "page",
+      before,
+      after: clonePage(next),
+      beforeLayers,
+      afterLayers,
+    });
+    scheduleSave();
+    scheduleRender();
+    setStatus("已粘贴到新图层；要挪位置就切到移动工具");
+  }, [commitPage, getLayer, pushUndo, scheduleRender, scheduleSave, setActiveLayer]);
+
+  const flipActiveLayer = useCallback(
+    (axis: "h" | "v") => {
+      const frame = focusFrameRef.current;
+      const meta = frame?.layers.find((l) => l.id === activeLayerRef.current) ?? frame?.layers[0];
+      if (!frame || !meta) return;
+      if (meta.locked) {
+        setStatus("当前图层已锁定");
+        return;
+      }
+      const canvas = getLayer(frame, meta.id);
+      const before = cloneSurface(canvas);
+      const after = createSurface(canvas.width, canvas.height);
+      const ctx = mustCtx(after);
+      if (axis === "h") {
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+      } else {
+        ctx.translate(0, canvas.height);
+        ctx.scale(1, -1);
+      }
+      ctx.drawImage(before, 0, 0);
+      replaceSurface(canvas, after);
+      pushUndo({
+        kind: "stroke",
+        frameId: frame.id,
+        layerId: meta.id,
+        before,
+        after: cloneSurface(canvas),
+      });
+      scheduleSave();
+      scheduleRender();
+      setStatus(axis === "h" ? "当前图层已水平翻转" : "当前图层已垂直翻转");
+    },
+    [getLayer, pushUndo, scheduleRender, scheduleSave],
+  );
+
+  const clearActiveLayer = useCallback(() => {
+    const frame = focusFrameRef.current;
+    const meta = frame?.layers.find((l) => l.id === activeLayerRef.current) ?? frame?.layers[0];
+    if (!frame || !meta) return;
+    if (meta.locked) {
+      setStatus("当前图层已锁定");
+      return;
+    }
+    const canvas = getLayer(frame, meta.id);
+    const before = cloneSurface(canvas);
+    mustCtx(canvas).clearRect(0, 0, canvas.width, canvas.height);
+    pushUndo({
+      kind: "stroke",
+      frameId: frame.id,
+      layerId: meta.id,
+      before,
+      after: cloneSurface(canvas),
+    });
+    scheduleSave();
+    scheduleRender();
+    setStatus("当前图层已清空");
+  }, [getLayer, pushUndo, scheduleRender, scheduleSave]);
+
+  const openFilter = useCallback(
+    (id: ComicFilterId) => {
+      const frame = focusFrameRef.current;
+      const meta = frame?.layers.find((l) => l.id === activeLayerRef.current) ?? frame?.layers[0];
+      if (!frame || !meta) {
+        setStatus("先双击一个格进入聚焦，再用滤镜");
+        return;
+      }
+      if (meta.locked) {
+        setStatus("当前图层已锁定");
+        return;
+      }
+      const canvas = getLayer(frame, meta.id);
+      filterSessionRef.current = {
+        frameId: frame.id,
+        layerId: meta.id,
+        before: cloneSurface(canvas),
+      };
+      setFilterOptions({ ...DEFAULT_FILTER_OPTIONS });
+      setFilterId(id);
+      setFilterOpen(true);
+      setAdvancedOpen(false);
+      setStatus("滤镜预览中，拖动参数可实时看效果");
+    },
+    [getLayer],
+  );
+
+  const applyFilterDraft = useCallback(
+    (id: ComicFilterId, opts: ComicFilterOptions) => {
+      const session = filterSessionRef.current;
+      const p = pageRef.current;
+      if (!session || !p) return;
+      const frame = frameById(p, session.frameId);
+      if (!frame) return;
+      const canvas = getLayer(frame, session.layerId);
+      const result = applyComicFilter(session.before, id, opts, selectionRef.current);
+      replaceSurface(canvas, result);
+      scheduleRender();
+    },
+    [getLayer, scheduleRender],
+  );
+
+  useEffect(() => {
+    if (!filterOpen) return;
+    applyFilterDraft(filterId, filterOptions);
+  }, [applyFilterDraft, filterId, filterOpen, filterOptions]);
+
+  const cancelFilter = useCallback(() => {
+    const session = filterSessionRef.current;
+    const p = pageRef.current;
+    if (session && p) {
+      const frame = frameById(p, session.frameId);
+      if (frame) replaceSurface(getLayer(frame, session.layerId), session.before);
+    }
+    filterSessionRef.current = null;
+    setFilterOpen(false);
+    scheduleRender();
+    setStatus("已取消滤镜");
+  }, [getLayer, scheduleRender]);
+
+  const commitFilter = useCallback(() => {
+    const session = filterSessionRef.current;
+    const p = pageRef.current;
+    if (!session || !p) {
+      setFilterOpen(false);
+      return;
+    }
+    const frame = frameById(p, session.frameId);
+    if (frame) {
+      const canvas = getLayer(frame, session.layerId);
+      pushUndo({
+        kind: "stroke",
+        frameId: frame.id,
+        layerId: session.layerId,
+        before: session.before,
+        after: cloneSurface(canvas),
+      });
+    }
+    filterSessionRef.current = null;
+    setFilterOpen(false);
+    scheduleSave();
+    scheduleRender();
+    setStatus("滤镜已应用到当前图层");
+  }, [getLayer, pushUndo, scheduleRender, scheduleSave]);
+
+  const startShapeTool = (kind: ShapeKind) => {
+    setShapeKindState(kind);
+    shapeKindRef.current = kind;
+    setTool("shape");
+    setAdvancedOpen(false);
+    setSelectionMenuOpen(false);
+    setStatus(
+      kind === "rect"
+        ? "图形：拖一个矩形，按住 Shift 画正方形"
+        : kind === "ellipse"
+          ? "图形：拖一个椭圆，按住 Shift 画正圆"
+          : "图形：拖一条直线，按住 Shift 锁定 45°",
+    );
+  };
+
+  const startMoveTool = () => {
+    setTool("move");
+    setAdvancedOpen(false);
+    setSelectionMenuOpen(false);
+    setStatus(
+      focusRef.current
+        ? "移动：拖动画面挪当前图层；有选区时只挪选区内容"
+        : "先双击一个格进入聚焦，再移动图层",
+    );
+  };
+
+  const startLiquifyTool = () => {
+    setTool("liquify");
+    setSelectionMenuOpen(false);
+    setStatus(
+      focusRef.current
+        ? "液化：按住并推动像素；半径和力度可在进阶工具里调"
+        : "先双击一个格进入聚焦，再液化",
+    );
+  };
+
   /* ───────── 键盘 ───────── */
 
   useEffect(() => {
@@ -1942,8 +2914,7 @@ export function ComicWorkspace({
   }, []);
 
   const toFocusPoint = useCallback((clientX: number, clientY: number): Point | null => {
-    const p = pageRef.current;
-    const frame = p?.frames.find((f) => f.id === focusRef.current);
+    const frame = focusFrameRef.current;
     const canvas = focusCanvasRef.current;
     if (!frame || !canvas) return null;
     const rect = canvas.getBoundingClientRect();
@@ -2012,6 +2983,23 @@ export function ComicWorkspace({
     if (!p || busy) return;
     const pt = toPagePoint(e.clientX, e.clientY);
     if (!pt) return;
+    if (mobileMulti) {
+      const frame = framesForPoint(p, pt);
+      if (frame) {
+        const ids = selectedFramesRef.current;
+        const already = ids.includes(frame.id);
+        const next = already ? ids.filter((x) => x !== frame.id) : [...ids, frame.id];
+        setSelectedFrames(next);
+        setSelectedBalloon(null);
+        setStatus(`已选 ${next.length} 格，再点「一起画」`);
+      } else {
+        setSelectedFrames([]);
+        setSelectedBalloon(null);
+        setStatus("点格选中，至少两格后一起画");
+      }
+      scheduleRender();
+      return;
+    }
     if (toolRef.current === "panel") {
       setPageFrameSelected(false);
       addDraftPoint(pt);
@@ -2053,7 +3041,7 @@ export function ComicWorkspace({
       setStatus(handle ? "拖动外框边角改大小" : "拖动整页外框");
       return;
     }
-    if (e.detail >= 2) {
+    if (e.detail >= 2 && !mobileMulti) {
       const frame = framesForPoint(p, pt);
       if (frame) {
         setSelectedFrames([frame.id]);
@@ -2161,7 +3149,7 @@ export function ComicWorkspace({
       setPageFrameSelected(false);
       const already = selectedFramesRef.current.includes(frame.id);
       let ids = selectedFramesRef.current;
-      if (e.shiftKey) {
+      if (e.shiftKey || mobileMulti) {
         ids = already ? ids.filter((x) => x !== frame.id) : [...ids, frame.id];
       } else if (!already || ids.length !== 1) {
         ids = [frame.id];
@@ -2536,19 +3524,40 @@ export function ComicWorkspace({
 
   const onFocusPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const p = pageRef.current;
-    const frame = p?.frames.find((f) => f.id === focusRef.current);
+    const frame = focusFrameRef.current;
     if (!p || !frame || busy) return;
+    const jointLayer = p.jointLayers?.find((item) => item.id === focusRef.current) ?? null;
+    if (jointLayer && !jointMaskRef.current) {
+      jointMaskRef.current = buildJointMask(
+        p.frames.filter((item) => jointLayer.frameIds.includes(item.id)),
+        jointLayer.rect,
+        jointLayer.crossPanel,
+      );
+    }
+    const joint =
+      jointLayer && jointMaskRef.current
+        ? {
+            layer: jointLayer,
+            frames: p.frames.filter((item) => jointLayer.frameIds.includes(item.id)),
+            mask: jointMaskRef.current,
+          }
+        : undefined;
     if (textEditRef.current) commitTextEdit();
     const pt = toFocusPoint(e.clientX, e.clientY);
     if (!pt) return;
-    if (!pointInFrame(frame, { x: pt.x + frame.x, y: pt.y + frame.y })) {
+    if (joint) {
+      if (!maskHasPoint(joint.mask, pt.x, pt.y)) {
+        setStatus("点在格缝外，这一笔没有落下");
+        return;
+      }
+    } else if (!pointInFrame(frame, { x: pt.x + frame.x, y: pt.y + frame.y })) {
       setStatus("点在格外面，这一笔没有落下");
       return;
     }
     if (toolRef.current === "selection") {
-      const mode: SelectionMode = e.shiftKey ? "add" : e.altKey ? "subtract" : "new";
+      const mode: SelectionMode = e.shiftKey ? "add" : e.altKey ? "subtract" : selectionCombine;
       if (selectionShape === "wand") {
-        const sample = buildFocusBase(p, frame, layerMap.current, assetMap.current);
+        const sample = buildFocusBase(p, frame, layerMap.current, assetMap.current, joint);
         const mask = wandMask(sample, pt, selectionTolerance, selectionContiguous);
         if (!mask) return;
         commitSelection(mask, mode);
@@ -2575,9 +3584,10 @@ export function ComicWorkspace({
     const canvas = getLayer(frame, layerMeta.id);
     if (toolRef.current === "fill") {
       const before = cloneSurface(canvas);
-      const changed = fillRegion(canvas, pt.x, pt.y, brushRef.current.color, selectionRef.current);
+      const mask = paintMaskForLayer(frame, layerMeta, canvas);
+      const changed = fillRegion(canvas, pt.x, pt.y, brushRef.current.color, mask, layerMeta.alphaLocked);
       if (!changed) {
-        setStatus(selectionRef.current ? "这块区域不在选区里，或已经是这个颜色" : "这块区域已经是这个颜色");
+        setStatus(mask ? "这块区域不在选区里，或已经是这个颜色" : "这块区域已经是这个颜色");
         return;
       }
       pushUndo({
@@ -2614,13 +3624,114 @@ export function ComicWorkspace({
       setStatus(`吸到 ${hex.toUpperCase()}`);
       return;
     }
+    if (toolRef.current === "move") {
+      const before = cloneSurface(canvas);
+      const mask = selectionRef.current;
+      let base: HTMLCanvasElement;
+      let moving: HTMLCanvasElement;
+      if (mask) {
+        base = cloneSurface(canvas);
+        const bctx = mustCtx(base);
+        bctx.globalCompositeOperation = "destination-out";
+        bctx.drawImage(mask, 0, 0);
+        bctx.globalCompositeOperation = "source-over";
+        moving = cloneSurface(canvas);
+        const mctx = mustCtx(moving);
+        mctx.globalCompositeOperation = "destination-in";
+        mctx.drawImage(mask, 0, 0);
+        mctx.globalCompositeOperation = "source-over";
+      } else {
+        base = createSurface(frame.w, frame.h);
+        moving = before;
+      }
+      moveSessionRef.current = {
+        frameId: frame.id,
+        layerId: layerMeta.id,
+        before,
+        base,
+        moving,
+        start: pt,
+        dx: 0,
+        dy: 0,
+        selection: !!mask,
+      };
+      e.currentTarget.setPointerCapture(e.pointerId);
+      setStatus(mask ? "移动：拖拽挪动选区里的像素" : "移动：拖拽挪动整个图层");
+      scheduleRender();
+      return;
+    }
+
+    if (toolRef.current === "liquify") {
+      if (layerMeta.alphaLocked) {
+        setStatus("液化需要关闭「锁定透明」");
+        return;
+      }
+      liquifySessionRef.current = {
+        frameId: frame.id,
+        layerId: layerMeta.id,
+        before: cloneSurface(canvas),
+        canvas,
+        last: pt,
+        moved: false,
+        mask: paintMaskForLayer(frame, layerMeta, canvas),
+      };
+      e.currentTarget.setPointerCapture(e.pointerId);
+      setStatus("液化：按住并推动笔迹，像推湿墨一样推开像素");
+      return;
+    }
+
+    if (toolRef.current === "shape") {
+      const preview = createSurface(frame.w, frame.h);
+      const before = cloneSurface(canvas);
+      const kind = shapeKindRef.current;
+      const pad = brushRef.current.size * 1.5 + 6;
+      const initial: Rect = {
+        x: pt.x - pad,
+        y: pt.y - pad,
+        w: pad * 2,
+        h: pad * 2,
+      };
+      drawShapePath(
+        mustCtx(preview),
+        kind,
+        pt,
+        pt,
+        brushRef.current.color,
+        brushRef.current.size,
+        brushRef.current.opacity / 100,
+        e.shiftKey || shapeConstrain,
+      );
+      shapeSessionRef.current = {
+        kind,
+        start: pt,
+        current: pt,
+        constrain: e.shiftKey || shapeConstrain,
+        frameId: frame.id,
+        layerId: layerMeta.id,
+        before,
+        preview,
+        dirty: initial,
+        lastRect: initial,
+      };
+      focusBaseRef.current = buildFocusBase(p, frame, layerMap.current, assetMap.current, joint);
+      e.currentTarget.setPointerCapture(e.pointerId);
+      setStatus("拖到合适大小松手；按住 Shift 可约束比例");
+      scheduleRender();
+      return;
+    }
+
     const penSample = penSampleOf(e.nativeEvent);
     const eraserEnd = penSample.eraser && penSample.pointerType === "pen" && brushRef.current.penEraser !== false;
     const erase = toolRef.current === "eraser" || eraserEnd;
-    const stroke = new Stroke(frame.w, frame.h, brushRef.current, erase, selectionRef.current);
+    if (erase && layerMeta.alphaLocked) {
+      setStatus("当前图层锁定了透明，橡皮不能擦");
+      return;
+    }
+    const mask = paintMaskForLayer(frame, layerMeta, canvas);
+    const stroke = new Stroke(frame.w, frame.h, brushRef.current, erase, mask);
     stroke.setPen(penSample);
     stroke.begin(pt.x, pt.y, penPressureOf(penSample, brushRef.current.penPressure ?? true));
-    focusBaseRef.current = buildFocusBase(p, frame, layerMap.current, assetMap.current);
+    focusBaseRef.current = buildFocusBase(p, frame, layerMap.current, assetMap.current, joint);
     strokeRef.current = {
       stroke,
       frameId: frame.id,
@@ -2628,6 +3739,8 @@ export function ComicWorkspace({
       erase,
       before: cloneSurface(canvas),
     };
+    strokeDirtyRef.current = null;
+    strokeLastPointRef.current = pt;
     e.currentTarget.setPointerCapture(e.pointerId);
     scheduleRender();
   };
@@ -2646,6 +3759,112 @@ export function ComicWorkspace({
       scheduleRender();
       return;
     }
+
+    const move = moveSessionRef.current;
+    if (move) {
+      const pt = toFocusPoint(e.clientX, e.clientY);
+      const frame = pageRef.current ? frameById(pageRef.current, move.frameId) : null;
+      if (!pt || !frame) return;
+      move.dx = pt.x - move.start.x;
+      move.dy = pt.y - move.start.y;
+      const canvas = layerMap.current.get(keyOf(move.frameId, move.layerId));
+      if (!canvas) return;
+      const ctx = mustCtx(canvas);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(move.base, 0, 0);
+      ctx.drawImage(move.moving, move.dx, move.dy);
+      scheduleRender();
+      return;
+    }
+
+    const liq = liquifySessionRef.current;
+    if (liq) {
+      const pt = toFocusPoint(e.clientX, e.clientY);
+      if (!pt) return;
+      const dx = pt.x - liq.last.x;
+      const dy = pt.y - liq.last.y;
+      if (Math.hypot(dx, dy) < 0.8) return;
+      const r = Math.max(18, liquifyRadius);
+      const stamp = createSurface(Math.ceil(r * 2), Math.ceil(r * 2));
+      const sctx = mustCtx(stamp);
+      sctx.imageSmoothingEnabled = true;
+      sctx.imageSmoothingQuality = "high";
+      sctx.drawImage(
+        liq.canvas,
+        liq.last.x - r,
+        liq.last.y - r,
+        r * 2,
+        r * 2,
+        0,
+        0,
+        r * 2,
+        r * 2,
+      );
+      sctx.globalCompositeOperation = "destination-in";
+      const grad = sctx.createRadialGradient(r, r, Math.max(1, r * 0.16), r, r, r);
+      grad.addColorStop(0, "rgba(0,0,0,1)");
+      grad.addColorStop(0.56, "rgba(0,0,0,0.92)");
+      grad.addColorStop(1, "rgba(0,0,0,0)");
+      sctx.fillStyle = grad;
+      sctx.fillRect(0, 0, r * 2, r * 2);
+      if (liq.mask) {
+        sctx.drawImage(liq.mask, -(pt.x - r), -(pt.y - r));
+      }
+      sctx.globalCompositeOperation = "source-over";
+      const ctx = mustCtx(liq.canvas);
+      ctx.save();
+      ctx.globalAlpha = clamp(liquifyStrength / 100, 0.08, 1);
+      ctx.drawImage(stamp, pt.x - r, pt.y - r);
+      ctx.restore();
+      liq.last = pt;
+      liq.moved = true;
+      scheduleRender();
+      return;
+    }
+
+    const shape = shapeSessionRef.current;
+    if (shape) {
+      const pt = toFocusPoint(e.clientX, e.clientY);
+      if (!pt) return;
+      shape.current = pt;
+      shape.constrain = e.shiftKey || shapeConstrain;
+      const ctx = mustCtx(shape.preview);
+      ctx.clearRect(0, 0, shape.preview.width, shape.preview.height);
+      drawShapePath(
+        ctx,
+        shape.kind,
+        shape.start,
+        shape.current,
+        brushRef.current.color,
+        brushRef.current.size,
+        brushRef.current.opacity / 100,
+        shape.constrain,
+      );
+      const pad = brushRef.current.size * 1.5 + 6;
+      const nextRect: Rect = {
+        x: Math.min(shape.start.x, pt.x) - pad,
+        y: Math.min(shape.start.y, pt.y) - pad,
+        w: Math.abs(pt.x - shape.start.x) + pad * 2,
+        h: Math.abs(pt.y - shape.start.y) + pad * 2,
+      };
+      const prevRect = shape.lastRect;
+      shape.dirty = prevRect
+        ? {
+            x: Math.min(prevRect.x, nextRect.x),
+            y: Math.min(prevRect.y, nextRect.y),
+            w:
+              Math.max(prevRect.x + prevRect.w, nextRect.x + nextRect.w) -
+              Math.min(prevRect.x, nextRect.x),
+            h:
+              Math.max(prevRect.y + prevRect.h, nextRect.y + nextRect.h) -
+              Math.min(prevRect.y, nextRect.y),
+          }
+        : nextRect;
+      shape.lastRect = nextRect;
+      scheduleRender();
+      return;
+    }
+
     const session = strokeRef.current;
     const frame = pageRef.current?.frames.find((f) => f.id === session?.frameId);
     if (!session || !frame) return;
@@ -2660,6 +3879,12 @@ export function ComicWorkspace({
       typeof (e.nativeEvent as PointerEvent).getCoalescedEvents === "function"
         ? (e.nativeEvent as PointerEvent).getCoalescedEvents()
         : [e.nativeEvent as PointerEvent];
+    const from = strokeLastPointRef.current;
+    let minX = from?.x ?? Infinity;
+    let minY = from?.y ?? Infinity;
+    let maxX = from?.x ?? -Infinity;
+    let maxY = from?.y ?? -Infinity;
+    let last: Point | null = null;
     for (const ev of events) {
       const x = (ev.clientX - rect.left) * sx;
       const y = (ev.clientY - rect.top) * sy;
@@ -2671,14 +3896,41 @@ export function ComicWorkspace({
         penPressureOf(sample, brushRef.current.penPressure ?? true),
         ev.timeStamp,
       );
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+      last = { x, y };
     }
+    if (!last) return;
+    strokeLastPointRef.current = last;
+    // 只重画这一小段：底图缓存，加上当前笔迹缓冲，脏矩形大约是一个笔刷
+    // 直径的几倍，不再每帧清 810×936 整张。
+    const pad = brushRef.current.size * 1.25 + 10;
+    const next: Rect = {
+      x: minX - pad,
+      y: minY - pad,
+      w: maxX - minX + pad * 2,
+      h: maxY - minY + pad * 2,
+    };
+    const prev = strokeDirtyRef.current;
+    strokeDirtyRef.current = prev
+      ? {
+          x: Math.min(prev.x, next.x),
+          y: Math.min(prev.y, next.y),
+          w:
+            Math.max(prev.x + prev.w, next.x + next.w) - Math.min(prev.x, next.x),
+          h:
+            Math.max(prev.y + prev.h, next.y + next.h) - Math.min(prev.y, next.y),
+        }
+      : next;
     scheduleRender();
   };
 
   const finishStroke = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const draft = selectionDraftRef.current;
     if (draft) {
-      const frame = pageRef.current?.frames.find((f) => f.id === focusRef.current);
+      const frame = focusFrameRef.current;
       const pt = toFocusPoint(e.clientX, e.clientY);
       if (frame) {
         if (draft.shape === "rect") {
@@ -2698,10 +3950,126 @@ export function ComicWorkspace({
       }
       return;
     }
+
+    const move = moveSessionRef.current;
+    if (move) {
+      const pt = toFocusPoint(e.clientX, e.clientY);
+      if (pt) {
+        move.dx = pt.x - move.start.x;
+        move.dy = pt.y - move.start.y;
+      }
+      const frame = pageRef.current ? frameById(pageRef.current, move.frameId) : null;
+      const canvas = frame ? layerMap.current.get(keyOf(frame.id, move.layerId)) : null;
+      if (canvas) {
+        const ctx = mustCtx(canvas);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(move.base, 0, 0);
+        ctx.drawImage(move.moving, move.dx, move.dy);
+        if (Math.hypot(move.dx, move.dy) < 0.5) {
+          replaceSurface(canvas, move.before);
+        } else {
+          pushUndo({
+            kind: "stroke",
+            frameId: move.frameId,
+            layerId: move.layerId,
+            before: move.before,
+            after: cloneSurface(canvas),
+          });
+          if (move.selection && selectionRef.current) {
+            const shifted = offsetMask(selectionRef.current, move.dx, move.dy);
+            selectionRef.current = shifted;
+            if (selectionCoreRef.current) {
+              selectionCoreRef.current = offsetMask(selectionCoreRef.current, move.dx, move.dy);
+            }
+            selectionTintRef.current = selectionTint(shifted);
+            selectionBoundsRef.current = selectionBounds(shifted);
+            setSelectionState(shifted);
+          }
+          scheduleSave();
+          setStatus("图层内容已移动");
+        }
+      }
+      moveSessionRef.current = null;
+      scheduleRender();
+      return;
+    }
+
+    const liq = liquifySessionRef.current;
+    if (liq) {
+      const frame = pageRef.current ? frameById(pageRef.current, liq.frameId) : null;
+      if (frame && liq.moved) {
+        const canvas = getLayer(frame, liq.layerId);
+        pushUndo({
+          kind: "stroke",
+          frameId: liq.frameId,
+          layerId: liq.layerId,
+          before: liq.before,
+          after: cloneSurface(canvas),
+        });
+        scheduleSave();
+        setStatus("液化已写入图层");
+      } else {
+        replaceSurface(liq.canvas, liq.before);
+        setStatus("液化没有移动，已取消");
+      }
+      liquifySessionRef.current = null;
+      scheduleRender();
+      return;
+    }
+
+    const shape = shapeSessionRef.current;
+    if (shape) {
+      const pt = toFocusPoint(e.clientX, e.clientY);
+      if (pt) {
+        shape.current = pt;
+        shape.constrain = e.shiftKey || shapeConstrain;
+      }
+      const frame = pageRef.current ? frameById(pageRef.current, shape.frameId) : null;
+      const canvas = frame ? layerMap.current.get(keyOf(frame.id, shape.layerId)) : null;
+      if (canvas) {
+        const dist = Math.hypot(shape.current.x - shape.start.x, shape.current.y - shape.start.y);
+        if (dist < 2) {
+          setStatus("图形太小，已取消");
+        } else {
+          const shapeLayer = createSurface(canvas.width, canvas.height);
+          const sctx = mustCtx(shapeLayer);
+          drawShapePath(
+            sctx,
+            shape.kind,
+            shape.start,
+            shape.current,
+            brushRef.current.color,
+            brushRef.current.size,
+            brushRef.current.opacity / 100,
+            shape.constrain,
+          );
+          if (jointMaskRef.current) {
+            sctx.globalCompositeOperation = "destination-in";
+            sctx.drawImage(jointMaskRef.current, 0, 0);
+            sctx.globalCompositeOperation = "source-over";
+          }
+          mustCtx(canvas).drawImage(shapeLayer, 0, 0);
+          pushUndo({
+            kind: "stroke",
+            frameId: shape.frameId,
+            layerId: shape.layerId,
+            before: shape.before,
+            after: cloneSurface(canvas),
+          });
+          scheduleSave();
+          setStatus("图形已落到当前图层");
+        }
+      }
+      shapeSessionRef.current = null;
+      focusBaseRef.current = null;
+      scheduleRender();
+      return;
+    }
+
     const session = strokeRef.current;
     const p = pageRef.current;
     if (!session || !p) return;
-    const frame = p.frames.find((f) => f.id === session.frameId);
+    const frame = frameById(p, session.frameId);
     if (!frame) {
       strokeRef.current = null;
       focusBaseRef.current = null;
@@ -2729,6 +4097,8 @@ export function ComicWorkspace({
       after,
     });
     strokeRef.current = null;
+    strokeDirtyRef.current = null;
+    strokeLastPointRef.current = null;
     focusBaseRef.current = null;
     setStatus("笔迹已写入图层");
     scheduleSave();
@@ -2788,6 +4158,13 @@ export function ComicWorkspace({
   const pageHasArtwork = (p: ComicPage) =>
     p.images.length > 0 ||
     p.balloons.length > 0 ||
+    (p.jointLayers ?? []).some((joint) => {
+      const c = layerMap.current.get(keyOf(joint.id, joint.id));
+      if (!c) return false;
+      const data = mustCtx(c).getImageData(0, 0, c.width, c.height).data;
+      for (let i = 3; i < data.length; i += 32) if (data[i] > 0) return true;
+      return false;
+    }) ||
     p.frames.some((f) =>
       f.layers.some((l) => {
         const c = layerMap.current.get(keyOf(f.id, l.id));
@@ -2811,7 +4188,7 @@ export function ComicWorkspace({
     const before = clonePage(p);
     const beforeLayers = snapshotPageLayers(p, layerMap.current);
     const frames = buildTemplateFrames(template, p.width, p.height, Date.now());
-    const next = { ...clonePage(p), frames, balloons: [], images: [] };
+    const next = { ...clonePage(p), frames, jointLayers: [], balloons: [], images: [] };
     layerMap.current = new Map();
     ensurePageLayers(next);
     const afterLayers = snapshotPageLayers(next, layerMap.current);
@@ -3142,6 +4519,10 @@ export function ComicWorkspace({
     async (file: File) => {
       const p = pageRef.current;
       if (!p) return;
+      if (p.jointLayers?.some((joint) => joint.id === focusRef.current)) {
+        setStatus("跨格线稿暂不支持放素材；退出多格后在单格放图");
+        return;
+      }
       const frame = focusRef.current
         ? p.frames.find((f) => f.id === focusRef.current)
         : activeFrame ?? p.frames[0];
@@ -3234,7 +4615,6 @@ export function ComicWorkspace({
     onBack?.();
   };
 
-  const focusFrame = page?.frames.find((f) => f.id === focusId) ?? null;
   const activeImages = activeFrame && page ? page.images.filter((i) => i.frameId === activeFrame.id) : [];
 
   const saveLabel =
@@ -3245,6 +4625,75 @@ export function ComicWorkspace({
         : saveState === "error"
           ? "保存失败"
           : "已保存";
+
+  const mobileZoomValue = focusFrame ? zoom : pageZoom;
+  const mobileZoomBy = (delta: number) => {
+    setMobileZoomOpen(false);
+    if (focusFrame) setZoom((z) => clamp(z + delta, 0.4, 4));
+    else setPageZoom((z) => clamp(z + delta, 0.5, 3));
+  };
+  const mobileZoomFit = () => {
+    setMobileZoomOpen(false);
+    if (focusFrame) {
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+    } else {
+      setPageZoom(1);
+    }
+  };
+  const openBrushPanel = () => {
+    setPanelTab("layers");
+    setBrushSectionOpen(true);
+    setMobileInspector(true);
+    setMobilePages(false);
+    setAdvancedOpen(false);
+    setMobileZoomOpen(false);
+  };
+  const startPagePress = (id: string) => {
+    if (pagePressRef.current) window.clearTimeout(pagePressRef.current.timer);
+    pagePressFiredRef.current = false;
+    const timer = window.setTimeout(() => {
+      pagePressFiredRef.current = true;
+      setConfirmDeletePage(id);
+      if (navigator.vibrate) navigator.vibrate(18);
+    }, 560);
+    pagePressRef.current = { id, timer };
+  };
+  const endPagePress = () => {
+    if (!pagePressRef.current) return;
+    window.clearTimeout(pagePressRef.current.timer);
+    pagePressRef.current = null;
+  };
+  const startPalettePress = (id: string) => {
+    if (palettePressRef.current) window.clearTimeout(palettePressRef.current.timer);
+    palettePressFiredRef.current = false;
+    const timer = window.setTimeout(() => {
+      palettePressFiredRef.current = true;
+      removePaletteColor(id);
+    }, 520);
+    palettePressRef.current = { id, timer };
+  };
+  const endPalettePress = () => {
+    if (!palettePressRef.current) return;
+    window.clearTimeout(palettePressRef.current.timer);
+    palettePressRef.current = null;
+  };
+  const enterSelectedFrame = () => {
+    const frame = page?.frames.find((f) => selectedFrames.includes(f.id));
+    if (!frame) {
+      setStatus("先在页面上点一格，再进格");
+      return;
+    }
+    if (selectedFrames.length >= 2) {
+      openJointFocus(selectedFrames);
+      setAdvancedOpen(false);
+      return;
+    }
+    setSelectedFrames([frame.id]);
+    setActiveLayer(frame.layers[0]?.id ?? null);
+    setFocus(frame.id);
+    setAdvancedOpen(false);
+  };
 
   /* ───────── 渲染 ───────── */
 
@@ -3292,10 +4741,17 @@ export function ComicWorkspace({
       )}
 
       <div className={`comic-body${focusFrame ? " focusing" : ""}`}>
+        {mobilePages && (
+          <button className="comic-mobile-scrim" aria-label="关闭页面" onClick={() => setMobilePages(false)} />
+        )}
         {!focusFrame && (
-          <aside className="comic-rail comic-pages">
+          <aside className={`comic-rail comic-pages${mobilePages ? " open" : ""}`}>
             <div className="comic-rail-head">
               <span>页面</span>
+              <small className="comic-pages-hint">长按删页</small>
+              <button className="comic-pages-close" onClick={() => setMobilePages(false)} title="关闭">
+                ×
+              </button>
               <button className="comic-mini-btn" onClick={() => void addPage()} title="新建一页">
                 +
               </button>
@@ -3305,9 +4761,20 @@ export function ComicWorkspace({
                 <button
                   key={item.id}
                   className={`comic-page-card${page?.id === item.id ? " active" : ""}`}
-                  onClick={() => void switchPage(item.id)}
+                  onClick={() => {
+                    if (pagePressFiredRef.current) {
+                      pagePressFiredRef.current = false;
+                      return;
+                    }
+                    void switchPage(item.id);
+                    setMobilePages(false);
+                  }}
+                  onPointerDown={() => startPagePress(item.id)}
+                  onPointerUp={endPagePress}
+                  onPointerCancel={endPagePress}
+                  onPointerLeave={endPagePress}
                   onDoubleClick={() => setConfirmDeletePage(item.id)}
-                  title="单击切换；双击删除（会先确认）"
+                  title="单击切换；长按删除（会先确认）"
                 >
                   <div className="comic-page-thumb">
                     {thumbs[item.id] ? (
@@ -3352,10 +4819,27 @@ export function ComicWorkspace({
                 </button>
                 {draftRect && <span className="comic-stage-flag">拖格中</span>}
                 {guides && <span className="comic-stage-flag">已吸附</span>}
-                单击选中 · 双击入格 · 拖格可自定格数
+                单击选中 · 双击入格 · 多选后一起画
               </div>
+              {selectedFrames.length >= 2 && (
+                <button
+                  className="comic-join-btn"
+                  onClick={() => openJointFocus(selectedFrames)}
+                  title="把选中的几格当成一张纸来画"
+                >
+                  一起画 · {selectedFrames.length} 格
+                </button>
+              )}
               {embedded && (
                 <div className="comic-stage-actions">
+                  <button
+                    className={`comic-head-menu${advancedOpen ? " open" : ""}`}
+                    onClick={() => setAdvancedOpen((v) => !v)}
+                    title="进阶工具：形状、移动、滤镜、选区"
+                  >
+                    <svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+                    <span>工具</span>
+                  </button>
                   <div className="comic-canvas-zoom" title="滚轮缩放画布">
                     <button
                       onClick={() => setPageZoom((z) => clamp(z - 0.1, 0.5, 3))}
@@ -3388,10 +4872,31 @@ export function ComicWorkspace({
                     <i />
                     {saveLabel}
                   </span>
-                  <button onClick={undo} title="撤销 Ctrl+Z">撤销</button>
-                  <button onClick={redo} title="重做 Ctrl+Shift+Z">重做</button>
-                  <button onClick={() => void savePage()}>保存</button>
+                  <button
+                    className={`comic-multi-btn${mobileMulti ? " on" : ""}`}
+                    onClick={() => {
+                      const next = !mobileMulti;
+                      setMobileMulti(next);
+                      if (next) setTool("select");
+                      setStatus(next ? "多选已开：依次点几格，再点「一起画」" : "多选已关");
+                    }}
+                    title="单指点选多格"
+                  >
+                    多选
+                  </button>
+                  <button className="comic-action-ghost" onClick={undo} title="撤销 Ctrl+Z">撤销</button>
+                  <button className="comic-action-ghost" onClick={redo} title="重做 Ctrl+Shift+Z">重做</button>
+                  <button className="comic-action-ghost" onClick={() => void savePage()}>保存</button>
                 </div>
+              )}
+              {!embedded && (
+                <button
+                  className={`comic-head-menu${advancedOpen ? " open" : ""}`}
+                  onClick={() => setAdvancedOpen((v) => !v)}
+                  title="进阶工具：形状、移动、滤镜、选区"
+                >
+                  工具
+                </button>
               )}
             </div>
           ) : (
@@ -3409,11 +4914,21 @@ export function ComicWorkspace({
                 </svg>
               </button>
               <div>
-                <strong>格内聚焦</strong>
+                <strong>{focusJoint ? `${focusFrames.length} 格并集` : "格内聚焦"}</strong>
                 <span>
                   {focusFrame.w} × {focusFrame.h} · {activeLayer?.name ?? "无图层"}
                 </span>
               </div>
+              {focusJoint && (
+                <button
+                  className={`comic-cross-toggle${focusJoint.crossPanel ? " on" : ""}`}
+                  onClick={toggleCrossPanel}
+                  title="跨格连画：打开后笔迹可以穿过所选格之间的格缝，格线仍在上层"
+                >
+                  <i />
+                  跨格连画
+                </button>
+              )}
               <div className="comic-focus-history">
                 <button onClick={undo} title="撤销 Ctrl+Z">撤销</button>
                 <button onClick={redo} title="重做 Ctrl+Shift+Z">重做</button>
@@ -3431,7 +4946,401 @@ export function ComicWorkspace({
                   适应
                 </button>
               </div>
+              <button
+                className={`comic-head-menu${advancedOpen ? " open" : ""}`}
+                onClick={() => setAdvancedOpen((v) => !v)}
+                title="进阶工具：形状、移动、滤镜、选区"
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+                    <span>工具</span>
+              </button>
             </div>
+          )}
+
+          {advancedOpen && (
+            <>
+              <button
+                className="comic-menu-scrim"
+                aria-label="关闭进阶工具"
+                onClick={() => setAdvancedOpen(false)}
+              />
+              <div className="comic-advanced-menu" role="menu">
+                <div className="comic-adv-head">
+                  <div>
+                    <strong>进阶工具</strong>
+                    <span>{focusFrame ? "全部作用于当前图层" : "先进格，再动笔"}</span>
+                  </div>
+                  <button onClick={() => setAdvancedOpen(false)} title="关闭">
+                    ×
+                  </button>
+                </div>
+
+                <div className="comic-adv-group">
+                  <span>创作</span>
+                  <div className="comic-adv-grid compact">
+                    <button
+                      className={tool === "balloon" ? "on" : ""}
+                      onClick={() => {
+                        setFocus(null);
+                        setTool("balloon");
+                        setAdvancedOpen(false);
+                        setStatus("气泡：在页面上拖出一个对话框");
+                      }}
+                    >
+                      气泡
+                    </button>
+                    <button
+                      className={tool === "panel" ? "on" : ""}
+                      onClick={() => {
+                        setFocus(null);
+                        setSelectedFrames([]);
+                        setSelectedBalloon(null);
+                        setTool("panel");
+                        setAdvancedOpen(false);
+                        setStatus("手绘分格：点四个角，第 4 个角落下就成格");
+                      }}
+                    >
+                      手绘格
+                    </button>
+                    <button
+                      className={tool === "frame" ? "on" : ""}
+                      onClick={() => {
+                        setFocus(null);
+                        setSelectedFrames([]);
+                        setSelectedBalloon(null);
+                        setPageFrameSelected(false);
+                        setTool("frame");
+                        setAdvancedOpen(false);
+                        setStatus("拖格：在页框里拖出一个矩形分格，松手成格");
+                      }}
+                    >
+                      拖格
+                    </button>
+                    <button
+                      onClick={() => {
+                        setTemplateOpen(true);
+                        setAdvancedOpen(false);
+                      }}
+                    >
+                      模板
+                    </button>
+                    <button
+                      onClick={() => {
+                        fileRef.current?.click();
+                        setAdvancedOpen(false);
+                      }}
+                    >
+                      图片
+                    </button>
+                    <button onClick={enterSelectedFrame} disabled={!selectedFrames.length}>
+                      进格
+                    </button>
+                    <button
+                      className={mobileMulti ? "on" : ""}
+                      onClick={() => {
+                        const next = !mobileMulti;
+                        setMobileMulti(next);
+                        if (next) setTool("select");
+                        setStatus(next ? "多选已开：依次点几格，再点「一起画」" : "多选已关");
+                      }}
+                    >
+                      多选
+                    </button>
+                    <button
+                      className={magnet ? "on" : ""}
+                      onClick={() => {
+                        setMagnet(!magnet);
+                        setStatus(magnet ? "磁吸已关" : "磁吸已开：靠近边线自动对齐");
+                      }}
+                    >
+                      磁吸
+                    </button>
+                    <button
+                      onClick={() => {
+                        setMobilePages(true);
+                        setAdvancedOpen(false);
+                      }}
+                    >
+                      页面
+                    </button>
+                    <button
+                      onClick={() => {
+                        setMobileInspector(true);
+                        setAdvancedOpen(false);
+                      }}
+                    >
+                      图层
+                    </button>
+                    <button
+                      onClick={() => {
+                        void savePage();
+                        setAdvancedOpen(false);
+                      }}
+                    >
+                      保存
+                    </button>
+                  </div>
+                </div>
+
+                <div className="comic-adv-group">
+                  <span>任意图形</span>
+                  <div className="comic-adv-grid">
+                    {(
+                      [
+                        ["rect", "矩形"],
+                        ["ellipse", "椭圆"],
+                        ["line", "直线"],
+                      ] as [ShapeKind, string][]
+                    ).map(([kind, label]) => (
+                      <button
+                        key={kind}
+                        className={tool === "shape" && shapeKind === kind ? "on" : ""}
+                        onClick={() => startShapeTool(kind)}
+                        disabled={!focusFrame}
+                      >
+                        {label}
+                        <em>Shift 等比</em>
+                      </button>
+                    ))}
+                    <button
+                      className={tool === "move" ? "on" : ""}
+                      onClick={startMoveTool}
+                      disabled={!focusFrame}
+                    >
+                      移动
+                      <em>拖图层 / 拖选区</em>
+                    </button>
+                    <button
+                      className={shapeConstrain ? "on" : ""}
+                      onClick={() => {
+                        setShapeConstrain((v) => !v);
+                        setStatus(shapeConstrain ? "等比已关：可自由拉长" : "等比已开：画正方 / 正圆 / 45° 线");
+                      }}
+                    >
+                      等比
+                      <em>手机替代 Shift</em>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="comic-adv-group">
+                  <span>液化</span>
+                  <div className="comic-adv-grid compact">
+                    <button
+                      className={tool === "liquify" ? "on" : ""}
+                      onClick={startLiquifyTool}
+                      disabled={!focusFrame}
+                    >
+                      推移
+                      <em>推开湿墨</em>
+                    </button>
+                    <label className="comic-adv-slider">
+                      <span>半径</span>
+                      <strong>{liquifyRadius}</strong>
+                      <input
+                        type="range"
+                        min="24"
+                        max="120"
+                        value={liquifyRadius}
+                        onChange={(e) => setLiquifyRadius(Number(e.target.value))}
+                      />
+                    </label>
+                    <label className="comic-adv-slider">
+                      <span>力度</span>
+                      <strong>{liquifyStrength}</strong>
+                      <input
+                        type="range"
+                        min="10"
+                        max="100"
+                        value={liquifyStrength}
+                        onChange={(e) => setLiquifyStrength(Number(e.target.value))}
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <div className="comic-adv-group">
+                  <span>选区</span>
+                  <div className="comic-adv-grid compact">
+                    <button onClick={selectAll} disabled={!focusFrame}>
+                      全选
+                    </button>
+                    <button onClick={invertSelection} disabled={!selection}>
+                      反选
+                    </button>
+                    <button onClick={clearSelection} disabled={!selection}>
+                      取消选区
+                    </button>
+                    <button
+                      onClick={() => {
+                        copySelection();
+                        setAdvancedOpen(false);
+                      }}
+                      disabled={!selection}
+                    >
+                      复制
+                    </button>
+                    <button
+                      onClick={() => {
+                        cutActiveSelection();
+                        setAdvancedOpen(false);
+                      }}
+                      disabled={!selection}
+                    >
+                      剪切
+                    </button>
+                    <button
+                      onClick={() => {
+                        pasteClipboard();
+                        setAdvancedOpen(false);
+                      }}
+                      disabled={!hasClipboard}
+                    >
+                      粘贴成新层
+                    </button>
+                  </div>
+                </div>
+
+                <div className="comic-adv-group">
+                  <span>图层</span>
+                  <div className="comic-adv-grid compact">
+                    <button onClick={() => flipActiveLayer("h")} disabled={!focusFrame}>
+                      水平翻转
+                    </button>
+                    <button onClick={() => flipActiveLayer("v")} disabled={!focusFrame}>
+                      垂直翻转
+                    </button>
+                    <button onClick={clearActiveLayer} disabled={!focusFrame}>
+                      清空图层
+                    </button>
+                  </div>
+                </div>
+
+                <div className="comic-adv-group">
+                  <span>滤镜</span>
+                  <div className="comic-adv-grid compact">
+                    {FILTER_ITEMS.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => openFilter(item.id)}
+                        disabled={!focusFrame}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {filterOpen && (
+            <>
+              <button
+                className="comic-menu-scrim"
+                aria-label="关闭滤镜"
+                onClick={cancelFilter}
+              />
+              <div className="comic-filter-panel">
+                <div className="comic-adv-head">
+                  <div>
+                    <strong>滤镜 · {FILTER_ITEMS.find((f) => f.id === filterId)?.label}</strong>
+                    <span>{selection ? "只改选区里的像素" : "整层预览"}</span>
+                  </div>
+                  <button onClick={cancelFilter} title="取消">
+                    ×
+                  </button>
+                </div>
+                {filterId === "adjust" && (
+                  <>
+                    <label className="comic-filter-slider">
+                      <span>亮度</span>
+                      <strong>{filterOptions.brightness}</strong>
+                      <input
+                        type="range"
+                        min="-100"
+                        max="100"
+                        value={filterOptions.brightness}
+                        onChange={(e) =>
+                          setFilterOptions((v) => ({ ...v, brightness: Number(e.target.value) }))
+                        }
+                      />
+                    </label>
+                    <label className="comic-filter-slider">
+                      <span>对比度</span>
+                      <strong>{filterOptions.contrast}</strong>
+                      <input
+                        type="range"
+                        min="-100"
+                        max="100"
+                        value={filterOptions.contrast}
+                        onChange={(e) =>
+                          setFilterOptions((v) => ({ ...v, contrast: Number(e.target.value) }))
+                        }
+                      />
+                    </label>
+                    <label className="comic-filter-slider">
+                      <span>饱和度</span>
+                      <strong>{filterOptions.saturation}</strong>
+                      <input
+                        type="range"
+                        min="-100"
+                        max="100"
+                        value={filterOptions.saturation}
+                        onChange={(e) =>
+                          setFilterOptions((v) => ({ ...v, saturation: Number(e.target.value) }))
+                        }
+                      />
+                    </label>
+                  </>
+                )}
+                {filterId === "hue" && (
+                  <label className="comic-filter-slider">
+                    <span>色相旋转</span>
+                    <strong>{filterOptions.hue}°</strong>
+                    <input
+                      type="range"
+                      min="-180"
+                      max="180"
+                      value={filterOptions.hue}
+                      onChange={(e) =>
+                        setFilterOptions((v) => ({ ...v, hue: Number(e.target.value) }))
+                      }
+                    />
+                  </label>
+                )}
+                {filterId === "blur" && (
+                  <label className="comic-filter-slider">
+                    <span>模糊半径</span>
+                    <strong>{filterOptions.blur}px</strong>
+                    <input
+                      type="range"
+                      min="0"
+                      max="24"
+                      value={filterOptions.blur}
+                      onChange={(e) =>
+                        setFilterOptions((v) => ({ ...v, blur: Number(e.target.value) }))
+                      }
+                    />
+                  </label>
+                )}
+                {filterId === "invert" && (
+                  <p className="comic-filter-note">反相会直接反转颜色，可点应用。</p>
+                )}
+                {filterId === "edges" && (
+                  <p className="comic-filter-note">查找边缘会提取线稿感，可点应用。</p>
+                )}
+                {filterId === "luma-alpha" && (
+                  <p className="comic-filter-note">越亮越透明，适合做高光或阴影层。</p>
+                )}
+                <div className="comic-filter-actions">
+                  <button onClick={cancelFilter}>取消</button>
+                  <button className="primary" onClick={commitFilter}>
+                    应用
+                  </button>
+                </div>
+              </div>
+            </>
           )}
 
           <div
@@ -3478,9 +5387,14 @@ export function ComicWorkspace({
                     if (!pt || !page) return;
                     const frame = framesForPoint(page, pt);
                     if (frame) {
-                      setSelectedFrames([frame.id]);
-                      setActiveLayer(frame.layers[0]?.id ?? null);
-                      setFocus(frame.id);
+                      const group = selectedFramesRef.current;
+                      if (group.length >= 2 && group.includes(frame.id)) {
+                        openJointFocus(group);
+                      } else {
+                        setSelectedFrames([frame.id]);
+                        setActiveLayer(frame.layers[0]?.id ?? null);
+                        setFocus(frame.id);
+                      }
                     } else {
                       const b = balloonForPoint(page, pt);
                       if (b) {
@@ -3607,6 +5521,23 @@ export function ComicWorkspace({
               </div>
               {tool === "selection" && (
                 <div className="comic-select-options">
+                  <div className="comic-select-combine">
+                    <span>触屏并集</span>
+                    {([
+                      ["new", "新建"],
+                      ["add", "加选"],
+                      ["subtract", "减选"],
+                    ] as [SelectionMode, string][]).map(([mode, label]) => (
+                      <button
+                        key={mode}
+                        className={selectionCombine === mode ? "on" : ""}
+                        onClick={() => setSelectionCombine(mode)}
+                        title={`手机上没有 Shift/Alt 时用这里；键盘仍然优先`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                   {selectionShape === "wand" && (
                     <label className="comic-select-slider">
                       <span>容差</span>
@@ -3810,9 +5741,165 @@ export function ComicWorkspace({
               />
             </label>
           </div>
+          {isMobile && (
+            <div className="comic-mobile-dock">
+              {mobileZoomOpen && (
+                <div className="comic-dock-zoom-pop">
+                  <button onClick={() => mobileZoomBy(-0.1)} title="缩小">−</button>
+                  <span>{Math.round(mobileZoomValue * 100)}%</span>
+                  <button onClick={() => mobileZoomBy(0.1)} title="放大">+</button>
+                  <button className="fit" onClick={mobileZoomFit}>适应</button>
+                </div>
+              )}
+              <div className="comic-dock-actions">
+                <DockBtn label="撤销" onClick={undo}>
+                  <svg viewBox="0 0 24 24"><path d="M9 7H4v5" /><path d="M4 12a7 7 0 1 0 7-7" /></svg>
+                </DockBtn>
+                <DockBtn label="重做" onClick={redo}>
+                  <svg viewBox="0 0 24 24"><path d="M15 7h5v5" /><path d="M20 12a7 7 0 1 1-7-7" /></svg>
+                </DockBtn>
+                <DockBtn label="笔刷" onClick={openBrushPanel} active={mobileInspector && brushSectionOpen}>
+                  <svg viewBox="0 0 24 24"><path d="M4 7h9M4 12h16M4 17h7" /><circle cx="17" cy="7" r="2" /><circle cx="14" cy="17" r="2" /></svg>
+                </DockBtn>
+                <DockBtn
+                  label="页面"
+                  onClick={() => {
+                    setMobilePages(true);
+                    setMobileInspector(false);
+                    setAdvancedOpen(false);
+                    setMobileZoomOpen(false);
+                  }}
+                  badge={String(visiblePages.length)}
+                >
+                  <svg viewBox="0 0 24 24"><rect x="4" y="4" width="12" height="16" /><path d="M8 8h12v14H8z" /></svg>
+                </DockBtn>
+                <DockBtn
+                  label="图层"
+                  onClick={() => {
+                    setPanelTab("layers");
+                    setMobileInspector(true);
+                    setMobilePages(false);
+                    setAdvancedOpen(false);
+                    setMobileZoomOpen(false);
+                  }}
+                  badge={activeFrame ? String(activeFrame.layers.length) : undefined}
+                >
+                  <svg viewBox="0 0 24 24"><path d="M12 4 3.5 9 12 14l8.5-5z" /><path d="M3.5 14 12 19l8.5-5" /></svg>
+                </DockBtn>
+                <DockBtn
+                  label="缩放"
+                  onClick={() => {
+                    setMobileZoomOpen((v) => !v);
+                    setAdvancedOpen(false);
+                  }}
+                  active={mobileZoomOpen}
+                >
+                  <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6" /><path d="M15 15l5 5" /><path d="M8 10.5h5" /></svg>
+                </DockBtn>
+                <DockBtn
+                  label="更多"
+                  active={advancedOpen}
+                  onClick={() => {
+                    setAdvancedOpen((v) => !v);
+                    setMobileZoomOpen(false);
+                  }}
+                >
+                  <svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="18" cy="12" r="1.4" /></svg>
+                </DockBtn>
+              </div>
+              <div className="comic-dock-tools">
+                <ToolBtn
+                  active={tool === "select" || tool === "selection"}
+                  onClick={() => setSelectionMenuOpen((v) => !v)}
+                  label="选择"
+                  icon={
+                    <svg viewBox="0 0 24 24">
+                      <path d="M4 4h6M4 4v6M20 20h-6M20 20v-6" />
+                      <path d="M9 7l10 6-4 1.6-1.5 4z" />
+                    </svg>
+                  }
+                />
+                <ToolBtn
+                  active={tool === "brush"}
+                  onClick={() => setTool("brush")}
+                  label="画笔"
+                  icon={
+                    <svg viewBox="0 0 24 24">
+                      <path d="M4 20c3-1 5-3 6-6l8-9 3 3-9 8c-3 1-5 3-6 6z" />
+                    </svg>
+                  }
+                />
+                <ToolBtn
+                  active={tool === "eraser"}
+                  onClick={() => setTool("eraser")}
+                  label="橡皮"
+                  icon={
+                    <svg viewBox="0 0 24 24">
+                      <path d="M5 15l7-8 6 5-6 7H7z" />
+                      <path d="M4 20h16" />
+                    </svg>
+                  }
+                />
+                <ToolBtn
+                  active={tool === "fill"}
+                  onClick={() => {
+                    setTool("fill");
+                    setStatus(focusRef.current ? "填充：点线稿闭合区" : "先双击一个格进入聚焦，再填充");
+                  }}
+                  label="填充"
+                  icon={
+                    <svg viewBox="0 0 24 24">
+                      <path d="M5 13l7-7 6 6-7 7-6-6z" />
+                      <path d="M9 21c2-2 4-4 6-6" />
+                    </svg>
+                  }
+                />
+                <ToolBtn
+                  active={tool === "eyedropper"}
+                  onClick={() => {
+                    setTool("eyedropper");
+                    setStatus(focusRef.current ? "吸色：点画稿任意位置" : "先双击一个格进入聚焦，再吸色");
+                  }}
+                  label="吸色"
+                  icon={
+                    <svg viewBox="0 0 24 24">
+                      <path d="M4 20l3-1 9-9-2-2-9 9z" />
+                      <path d="M15 5l4 4" />
+                    </svg>
+                  }
+                />
+                <label className="comic-dock-color" title="颜色与笔刷">
+                  <span style={{ background: brush.color }} />
+                  <em>颜色</em>
+                  <input type="color" value={brush.color} onChange={(e) => chooseColor(e.target.value)} />
+                </label>
+              </div>
+            </div>
+          )}
+          {!mobilePages && (
+            <button
+              className="comic-mobile-pages-btn"
+              onClick={() => setMobilePages(true)}
+              title="页面列表"
+            >
+              页面
+            </button>
+          )}
+          {!mobileInspector && (
+            <button
+              className="comic-mobile-inspector-btn"
+              onClick={() => setMobileInspector(true)}
+              title="图层、颜色与笔刷"
+            >
+              图层
+            </button>
+          )}
         </section>
 
-        <aside className="comic-inspector">
+        {mobileInspector && (
+          <button className="comic-mobile-scrim" aria-label="关闭图层" onClick={() => setMobileInspector(false)} />
+        )}
+        <aside className={`comic-inspector${mobileInspector ? " open" : ""}`}>
           <div className="comic-tabs">
             <button
               className={panelTab === "layers" ? "on" : ""}
@@ -3825,6 +5912,9 @@ export function ComicWorkspace({
             </button>
             <button className={panelTab === "assets" ? "on" : ""} onClick={() => setPanelTab("assets")}>
               素材
+            </button>
+            <button className="comic-inspector-close" onClick={() => setMobileInspector(false)} title="关闭">
+              ×
             </button>
           </div>
 
@@ -3878,30 +5968,97 @@ export function ComicWorkspace({
                     ))}
                   </div>
                   {activeLayer && (
-                    <label className="comic-opacity">
-                      <span>不透明度</span>
-                      <strong>{Math.round(activeLayer.opacity * 100)}%</strong>
-                      <input
-                        type="range"
-                        min="0"
-                        max="100"
-                        value={Math.round(activeLayer.opacity * 100)}
-                        onChange={(e) =>
-                          patchLayer(activeLayer.id, { opacity: Number(e.target.value) / 100 })
-                        }
-                      />
-                    </label>
+                    <>
+                      <label className="comic-opacity">
+                        <span>不透明度</span>
+                        <strong>{Math.round(activeLayer.opacity * 100)}%</strong>
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          value={Math.round(activeLayer.opacity * 100)}
+                          onChange={(e) =>
+                            patchLayer(activeLayer.id, { opacity: Number(e.target.value) / 100 })
+                          }
+                        />
+                      </label>
+                      <label className="comic-blend-row">
+                        <span>混合</span>
+                        <select
+                          value={activeLayer.blendMode ?? "normal"}
+                          onChange={(e) =>
+                            patchLayer(activeLayer.id, {
+                              blendMode: e.target.value as ComicBlendMode,
+                            })
+                          }
+                        >
+                          {BLEND_MODE_ITEMS.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <div className="comic-layer-toggles">
+                        <button
+                          className={activeLayer.clipping ? "on" : ""}
+                          onClick={() =>
+                            patchLayer(activeLayer.id, { clipping: !activeLayer.clipping })
+                          }
+                          title="只显示在下方图层有像素的地方"
+                        >
+                          剪贴蒙版
+                        </button>
+                        <button
+                          className={activeLayer.alphaLocked ? "on" : ""}
+                          onClick={() =>
+                            patchLayer(activeLayer.id, {
+                              alphaLocked: !activeLayer.alphaLocked,
+                            })
+                          }
+                          title="只能改已有像素的颜色，不能画出新区域"
+                        >
+                          锁定透明
+                        </button>
+                      </div>
+                    </>
                   )}
                   <div className="comic-layer-actions">
                     <button onClick={addLayer}>新建图层</button>
                     <button onClick={() => activeLayer && deleteLayer(activeLayer.id)}>删除图层</button>
                   </div>
+                  {activeLayer && (
+                    <div className="comic-layer-actions comic-layer-tools">
+                      <button onClick={() => flipActiveLayer("h")}>水平翻转</button>
+                      <button onClick={() => flipActiveLayer("v")}>垂直翻转</button>
+                      <button onClick={clearActiveLayer}>清空图层</button>
+                      <button onClick={copySelection} disabled={!selection}>
+                        复制
+                      </button>
+                      <button onClick={cutActiveSelection} disabled={!selection}>
+                        剪切
+                      </button>
+                      <button onClick={pasteClipboard} disabled={!hasClipboard}>
+                        粘贴
+                      </button>
+                    </div>
+                  )}
                 </>
               ) : (
                 <div className="comic-empty">先在页面上选中一个格。</div>
               )}
 
               <div className="comic-sep" />
+              <button
+                className={`comic-brush-toggle${brushSectionOpen ? " on" : ""}`}
+                onClick={() => setBrushSectionOpen((v) => !v)}
+              >
+                <span>颜色与笔刷</span>
+                <em>{PRESETS.find((item) => item.id === preset)?.name ?? "笔刷"} · {brush.color.toUpperCase()}</em>
+                <strong>{brushSectionOpen ? "收起" : "展开"}</strong>
+              </button>
+              {brushSectionOpen && (
+                <>
               <div className="comic-panel-title">
                 <span>笔</span>
                 <div className="comic-panel-actions">
@@ -4024,7 +6181,7 @@ export function ComicWorkspace({
 
                 <div className="comic-color-label">
                   <span>我的色板</span>
-                  <em>右键移除</em>
+                  <em>长按移除</em>
                 </div>
                 {paletteColors.length > 0 ? (
                   <div className="comic-swatch-grid comic-palette-grid">
@@ -4033,8 +6190,18 @@ export function ComicWorkspace({
                         key={`palette-${c}`}
                         className={`comic-swatch${brush.color.toLowerCase() === c ? " active" : ""}`}
                         style={{ background: c }}
-                        title={`${c} · 右键从色板移除`}
-                        onClick={() => chooseColor(c)}
+                        title={`${c} · 长按从色板移除`}
+                        onClick={() => {
+                          if (palettePressFiredRef.current) {
+                            palettePressFiredRef.current = false;
+                            return;
+                          }
+                          chooseColor(c);
+                        }}
+                        onPointerDown={() => startPalettePress(c)}
+                        onPointerUp={endPalettePress}
+                        onPointerCancel={endPalettePress}
+                        onPointerLeave={endPalettePress}
                         onContextMenu={(e) => {
                           e.preventDefault();
                           removePaletteColor(c);
@@ -4219,6 +6386,8 @@ export function ComicWorkspace({
               <div className="comic-brush-note">
                 Strata 同一套笔刷内核：压感、笔尖、纹理、流量与单笔缓冲。数值越小越跟手。
               </div>
+                </>
+              )}
             </div>
           )}
 
@@ -4690,7 +6859,7 @@ export function ComicWorkspace({
             <div className="comic-confirm-actions">
               <button onClick={() => setConfirmDeletePage(null)}>保留</button>
               <button className="danger" onClick={() => void deletePage(confirmDeletePage)}>
-                删除
+                删除这一页
               </button>
             </div>
           </div>
@@ -4747,6 +6916,33 @@ function ToolBtn({
     <button className={`comic-tool${active ? " active" : ""}`} onClick={onClick} title={label}>
       {icon}
       <span>{label}</span>
+    </button>
+  );
+}
+
+function DockBtn({
+  label,
+  onClick,
+  active = false,
+  badge,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  active?: boolean;
+  badge?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      className={`comic-dock-btn${active ? " active" : ""}`}
+      onClick={onClick}
+      title={label}
+      type="button"
+    >
+      <i className="comic-dock-icon">{children}</i>
+      <span>{label}</span>
+      {badge ? <em>{badge}</em> : null}
     </button>
   );
 }

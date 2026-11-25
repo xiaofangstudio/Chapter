@@ -39,6 +39,17 @@ function itemLabel(path: string, chapterTitles: Record<string, string>): string 
     return title ? `正文 · ${title}` : `正文 · ${id}`;
   }
   if (path.startsWith("notes/")) return `灵感笔记 · ${path.slice("notes/".length)}`;
+  if (path === "comic/project.json") return "漫画工程 · 页面顺序/尺寸/阅读方向";
+  if (path.startsWith("comic/pages/")) {
+    const parts = path.split("/");
+    const pageId = parts[2] ?? "";
+    const file = parts.slice(3).join("/");
+    if (file === "page.json") return `漫画页 · ${pageId}`;
+    if (file.startsWith("layers/")) return `漫画图层 · ${pageId} / ${file.slice("layers/".length)}`;
+    if (file.startsWith("assets/")) return `漫画素材 · ${pageId} / ${file.slice("assets/".length)}`;
+    if (file.startsWith("thumbs/")) return `漫画缩略图 · ${pageId}`;
+    return `漫画 · ${pageId} / ${file}`;
+  }
   if (path.startsWith("assets/")) return `图片 · ${path.slice("assets/".length)}`;
   return path;
 }
@@ -288,7 +299,7 @@ export function TransferDialog({ bookPath, outline = null, onClose, onApplied }:
                 <h4>{snap.direction === "pc_to_phone" ? "电脑已经发完" : "手机书稿已经写进电脑"}</h4>
                 <p>
                   {snap.direction === "pc_to_phone"
-                    ? "手机页面会收到 .chapterpack；在手机 Chapter 里导入后，只合并变化的部分。"
+                    ? "手机页面会收到 .chapterpack；下载后回到 Chapter 书架，点“导入同步包”读入即可。"
                     : "电脑已经按同步包更新了这本书，界面偏好没有被覆盖。"}
                 </p>
                 <div className="transfer-done-stats">

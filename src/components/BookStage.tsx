@@ -742,12 +742,14 @@ export function BookStage({ books, covers, initialPath, originRect, onClose, onE
           <div className="book-focus-info" key={focused.path}>
             <h2>{focused.title}</h2>
             <p>
-              {focused.author || t("佚名")} · {focused.chapterCount} {t("章")} · {fmtWords(focused.words)}{" "}
-              {t("字")}
+              {focused.author || t("佚名")} ·{" "}
+              {focused.kind === "comic"
+                ? `${focused.chapterCount} ${t("话")} · ${focused.comicPages ?? 0} ${t("页")} · ${focused.comicPanels ?? 0} ${t("格")}`
+                : `${focused.chapterCount} ${t("章")} · ${fmtWords(focused.words)} ${t("字")}`}
             </p>
             <div className="book-focus-meta">
               <span>
-                {t("书脊厚度")} {spineDepth(focused.words)}px
+                {t("书脊厚度")} {spineDepth(focused.kind === "comic" ? (focused.comicPages ?? 0) * 400 : focused.words)}px
               </span>
               <span>
                 {t("最近更新")} {new Date(focused.updatedAt).toLocaleDateString("zh-CN")}

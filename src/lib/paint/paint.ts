@@ -856,6 +856,11 @@ export class Stroke {
   private readonly settings: BrushSettings;
   /** 选区蒙版：非空时每个笔尖落下即刻裁进选区（拖动中实时生效，而非抬笔才裁） */
   private readonly clipMask: HTMLCanvasElement | null;
+  /** 一次事件里所有新笔尖的并集；裁剪只做一次，别每个笔尖 save/clip/drawImage。 */
+  private clipMinX = Infinity;
+  private clipMinY = Infinity;
+  private clipMaxX = -Infinity;
+  private clipMaxY = -Infinity;
   /** 对称模式：每个笔尖按中轴镜像再补落 */
   private readonly symmetry: SymmetryMode;
   /** 最近一次数位板采样；鼠标 / 触摸也会给一份恒等采样 */
@@ -1046,6 +1051,7 @@ export class Stroke {
     this.lastPressure = this.pressure;
     this.started = true;
     this.drawDab();
+    this.applyPendingClip();
   }
 
   /** 追加一个采样点。 */
@@ -1140,6 +1146,7 @@ export class Stroke {
     // 3) 不足一个笔尖：把状态推进到当前时间，余量留到下一次事件
     this.updateStates(dabsTodo, x - this.x, y - this.y, pressure - this.pressure, dtimeLeft);
     this.partialDabs = dabsMoved + dabsTodo;
+    this.applyPendingClip();
   }
 
   /** 推进状态：位置、半径、落笔点平滑、速度平滑。 */
@@ -1282,7 +1289,7 @@ export class Stroke {
       c.fill();
       if (filter) c.filter = "none";
       this.trackDab(px, py, r);
-      this.clipDab(px, py, r);
+      this.markClip(px, py, r);
       return;
     }
 
@@ -1335,7 +1342,7 @@ export class Stroke {
       c.restore();
     }
     this.trackDab(px, py, r);
-    this.clipDab(px, py, r);
+    this.markClip(px, py, r);
   }
 
   /** 记下这个笔尖的外接矩形（含抖动余量），供纹理裁剪定界。 */
@@ -1348,19 +1355,34 @@ export class Stroke {
   }
 
   /**
-   * 选区实时裁剪：笔尖刚落下的那一小块用 destination-in 咬一遍蒙版。
+   * 选区实时裁剪：先登记每个新笔尖的外接矩形，一次事件结束再统一咬蒙版。
    *
-   * 只裁笔尖的外接矩形 —— 之前落下的区域早已裁过，重复裁会越裁越狠；
-   * 这样拖动中笔画在选区外的部分当场消失，与 PhotoCraft / PS 一致，
-   * 不必等到抬笔的 finish() 才整体裁一次。
+   * 之前每个笔尖都 save/clip/drawImage 一次整张蒙版，选区一开就把主线程
+   * 拖进几十次裁剪；现在按事件并集裁一次，拖动中的视觉结果不变。
    */
-  private clipDab(x: number, y: number, r: number): void {
+  private markClip(x: number, y: number, r: number): void {
+    if (!this.clipMask) return;
+    const x0 = x - r - 2;
+    const y0 = y - r - 2;
+    const x1 = x + r + 2;
+    const y1 = y + r + 2;
+    if (x0 < this.clipMinX) this.clipMinX = x0;
+    if (y0 < this.clipMinY) this.clipMinY = y0;
+    if (x1 > this.clipMaxX) this.clipMaxX = x1;
+    if (y1 > this.clipMaxY) this.clipMaxY = y1;
+  }
+
+  private applyPendingClip(): void {
     const m = this.clipMask;
-    if (!m) return;
-    const x0 = Math.max(0, Math.floor(x - r - 2));
-    const y0 = Math.max(0, Math.floor(y - r - 2));
-    const x1 = Math.min(this.buf.width, Math.ceil(x + r + 2));
-    const y1 = Math.min(this.buf.height, Math.ceil(y + r + 2));
+    if (!m || this.clipMaxX <= this.clipMinX || this.clipMaxY <= this.clipMinY) return;
+    const x0 = Math.max(0, Math.floor(this.clipMinX));
+    const y0 = Math.max(0, Math.floor(this.clipMinY));
+    const x1 = Math.min(this.buf.width, Math.ceil(this.clipMaxX));
+    const y1 = Math.min(this.buf.height, Math.ceil(this.clipMaxY));
+    this.clipMinX = Infinity;
+    this.clipMinY = Infinity;
+    this.clipMaxX = -Infinity;
+    this.clipMaxY = -Infinity;
     if (x1 <= x0 || y1 <= y0) return;
     const c = this.ctx;
     c.save();

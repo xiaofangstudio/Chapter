@@ -12813,3 +12813,34 @@ body.stage-live .near-aura {
   .transfer-arrow.back svg { transform: rotate(-90deg); }
   .transfer-arrow em { display: none; }
 }
+
+/* 漫画首页“今天”卡片：不显示小说字数环。 */
+.wb-comic-today {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: end;
+  gap: 4px 8px;
+  padding: 14px 0 10px;
+}
+.wb-comic-today b {
+  font-family: var(--font-serif);
+  font-size: 46px;
+  line-height: 0.95;
+  color: var(--accent-ink, #225f50);
+}
+.wb-comic-today em {
+  font-style: normal;
+  font-size: 13px;
+  color: var(--text-3);
+  padding-bottom: 4px;
+}
+.wb-comic-today p {
+  grid-column: 1 / -1;
+  margin: 8px 0 12px;
+  color: var(--text-2);
+  font-size: 13px;
+}
+.wb-comic-today .btn {
+  grid-column: 1 / -1;
+  justify-self: start;
+}

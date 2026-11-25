@@ -10,7 +10,7 @@ use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::Emitter;
@@ -23,6 +23,10 @@ const BOOK_FILE: &str = "book.json";
 const OUTLINE_FILE: &str = "outline.json";
 const LORE_FILE: &str = "lore.json";
 
+/// Android 没有 Documents 可写目录，启动时把 App 私有数据目录注入这里。
+static APP_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+static LIBRARY_ROOT: OnceLock<PathBuf> = OnceLock::new();
+
 // ───────────────────────── 小工具 ─────────────────────────
 
 fn now_ms() -> i64 {
@@ -33,6 +37,9 @@ fn now_ms() -> i64 {
 }
 
 fn config_dir() -> PathBuf {
+    if let Some(p) = APP_DATA_DIR.get() {
+        return p.join("studio.xiaofang.chapter");
+    }
     if let Some(p) = std::env::var_os("APPDATA") {
         return PathBuf::from(p).join("studio.xiaofang.chapter");
     }
@@ -50,6 +57,9 @@ fn home() -> PathBuf {
 }
 
 fn default_library() -> PathBuf {
+    if let Some(root) = LIBRARY_ROOT.get() {
+        return root.clone();
+    }
     home().join("Documents").join("Chapter")
 }
 
@@ -197,7 +207,10 @@ fn chapters_dir(project: &Path) -> PathBuf {
 }
 
 fn default_outline() -> Value {
-    let ms = now_ms();
+    default_outline_at(now_ms())
+}
+
+fn default_outline_at(ms: i64) -> Value {
     json!({
         "volumes": [
             {
@@ -355,6 +368,9 @@ struct BookSummary {
     cover_mode: Option<String>,
     kind: Option<String>,
     series_id: Option<String>,
+    comic_pages: usize,
+    comic_panels: usize,
+    comic_balloons: usize,
 }
 
 fn summarize_book(dir: &Path) -> Option<BookSummary> {
@@ -409,6 +425,33 @@ fn summarize_book(dir: &Path) -> Option<BookSummary> {
                 .sum()
         })
         .unwrap_or(0);
+    let mut comic_pages = 0usize;
+    let mut comic_panels = 0usize;
+    let mut comic_balloons = 0usize;
+    if kind.as_deref() == Some("comic") {
+        if let Ok(entries) = fs::read_dir(dir.join("comic").join("pages")) {
+            for entry in entries.flatten() {
+                if !entry.path().is_dir() {
+                    continue;
+                }
+                let page = read_json_value(&entry.path().join("page.json"));
+                if page.is_null() {
+                    continue;
+                }
+                comic_pages += 1;
+                comic_panels += page
+                    .get("frames")
+                    .and_then(|v| v.as_array())
+                    .map(|v| v.len())
+                    .unwrap_or(0);
+                comic_balloons += page
+                    .get("balloons")
+                    .and_then(|v| v.as_array())
+                    .map(|v| v.len())
+                    .unwrap_or(0);
+            }
+        }
+    }
     Some(BookSummary {
         path: dir.to_string_lossy().to_string(),
         title: title.to_string(),
@@ -424,6 +467,9 @@ fn summarize_book(dir: &Path) -> Option<BookSummary> {
         cover_mode,
         kind,
         series_id,
+        comic_pages,
+        comic_panels,
+        comic_balloons,
     })
 }
 
@@ -1174,7 +1220,7 @@ fn create_book(
         });
     }
     write_json(&dir.join(BOOK_FILE), &serde_json::to_string(&book).unwrap())?;
-    let mut outline = default_outline();
+    let mut outline = default_outline_at(ms);
     if is_comic {
         outline["volumes"][0]["chapters"][0]["title"] = json!("第一话");
         outline["volumes"][0]["chapters"][0]["kind"] = json!("comic");
@@ -4499,6 +4545,18 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             use tauri::Manager;
+            // Android 的 Documents 不可写；书库与配置统一落在 App 私有目录。
+            if cfg!(target_os = "android") {
+                if let Ok(data) = app.path().app_data_dir() {
+                    let _ = APP_DATA_DIR.set(data.clone());
+                    let root = data.join("Chapter");
+                    let _ = LIBRARY_ROOT.set(root.clone());
+                    let _ = fs::create_dir_all(&root);
+                    if !settings_path().exists() {
+                        let _ = save_library(&root);
+                    }
+                }
+            }
             // WebView2 在拖拽放大时会先露出宿主底色；和界面纸色对齐，避免黑边闪一下。
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_background_color(Some(tauri::window::Color(250, 245, 236, 255)));
@@ -4571,7 +4629,8 @@ pub fn run() {
             sync::transfer_direction,
             sync::transfer_confirm,
             sync::transfer_cancel,
-            sync::transfer_close
+            sync::transfer_close,
+            sync::import_chapterpack
         ])
         .run(tauri::generate_context!())
         .expect("Chapter 启动失败");
@@ -4701,7 +4760,7 @@ mod tests {
         assert!(xml.contains("第一章"));
         assert!(xml.contains("word/media") || xml.contains("rIdImg1"));
         assert!(archive.by_name("word/media/image1.png").is_ok());
-        if edge_binary().is_some() {
+        if print_browser().is_some() {
             let pdf = dir.join("out.pdf");
             print_pdf(&doc, &pdf).unwrap();
             assert!(fs::metadata(&pdf).unwrap().len() > 10_000);

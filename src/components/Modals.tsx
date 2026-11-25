@@ -256,7 +256,6 @@ export function NewBookDialog({
           <label>{t(kind === "comic" ? "书名 / 漫画名" : "书名")}</label>
           <input
             className="input"
-            autoFocus
             value={title}
             placeholder={t(kind === "comic" ? "例如：方岛夜航" : "例如：长夜将尽")}
             onChange={(e) => setTitle(e.target.value)}

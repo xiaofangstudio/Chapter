@@ -131,6 +131,9 @@ export interface BookSummary {
   coverStyle?: string | null;
   kind?: "novel" | "comic" | null;
   seriesId?: string | null;
+  comicPages?: number;
+  comicPanels?: number;
+  comicBalloons?: number;
 }
 
 export interface SeriesMeta {

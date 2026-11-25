@@ -15,6 +15,7 @@ interface Props {
   onOpen: (book: BookSummary) => void;
   onNew: () => void;
   onImport: () => void;
+  onImportPackage: () => void;
   onWorkspace: () => void;
   onTransfer: () => void;
   onOpenFolder: () => void;
@@ -34,6 +35,7 @@ export function Welcome({
   onOpen,
   onNew,
   onImport,
+  onImportPackage,
   onWorkspace,
   onTransfer,
   onOpenFolder,
@@ -64,6 +66,11 @@ export function Welcome({
     { label: t("在文件夹中显示"), icon: "folder", onClick: () => onReveal(book) },
     { label: t("移到回收站"), icon: "trash", danger: true, onClick: () => onDelete(book) },
   ];
+
+  const comicPagesTotal = books.reduce(
+    (n, b) => n + (b.kind === "comic" ? b.comicPages ?? 0 : 0),
+    0,
+  );
 
   return (
     <div className="welcome">
@@ -121,6 +128,10 @@ export function Welcome({
               <Icon name="download" size={16} />
               {t("导入书稿")}
             </button>
+            <button className="btn btn-ghost btn-lg" onClick={onImportPackage}>
+              <Icon name="box" size={16} />
+              {t("导入同步包")}
+            </button>
           </div>
           <div className="hero-foot">
             <span>
@@ -130,6 +141,14 @@ export function Welcome({
             <span>
               {t("累计")} <b>{fmtWords(totalWords)}</b>&nbsp;{t("字")}
             </span>
+            {comicPagesTotal > 0 && (
+              <>
+                <span className="divider-v" />
+                <span>
+                  {t("漫画页数")} <b>{comicPagesTotal}</b>
+                </span>
+              </>
+            )}
             <span className="divider-v" />
             <span>{t("本地存储 · 零账号 · 不上传")}</span>
           </div>
@@ -186,15 +205,29 @@ export function Welcome({
                         <div className="book-title">{b.title || t("未命名")}</div>
                         <div className="book-author">{b.author || t("佚名")}</div>
                         <div className="book-meta">
-                          <span className="book-words"><b>{fmtWords(b.words)}</b> {t("字")}</span>
-                          <span>·</span>
-                          <span>{b.chapterCount} {t("章")}</span>
-                          <span>·</span>
-                          <span>{relTime(b.updatedAt)}</span>
+                          {b.kind === "comic" ? (
+                            <>
+                              <span className="book-words"><b>{b.comicPages ?? 0}</b> {t("页")}</span>
+                              <span>·</span>
+                              <span>{(b.comicPanels ?? 0)} {t("格")}</span>
+                              <span>·</span>
+                              <span>{relTime(b.updatedAt)}</span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="book-words"><b>{fmtWords(b.words)}</b> {t("字")}</span>
+                              <span>·</span>
+                              <span>{b.chapterCount} {t("章")}</span>
+                              <span>·</span>
+                              <span>{relTime(b.updatedAt)}</span>
+                            </>
+                          )}
                         </div>
-                        <div className="book-progress">
-                          <i style={{ width: `${pct}%` }} />
-                        </div>
+                        {b.kind !== "comic" && (
+                          <div className="book-progress">
+                            <i style={{ width: `${pct}%` }} />
+                          </div>
+                        )}
                       </div>
                       <button
                         className="icon-btn card-menu"

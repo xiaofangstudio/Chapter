@@ -3,6 +3,7 @@ import App from "./App";
 import "./styles/tokens.css";
 import "./styles/app.css";
 import "./styles/comic.css";
+import "./styles/mobile.css";
 import { LANGUAGES, type UiLanguage } from "./types";
 import { ensureUiPack, setUiLanguage } from "./lib/i18n";
 

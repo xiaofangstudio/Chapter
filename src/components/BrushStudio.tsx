@@ -102,7 +102,7 @@ const TEXTURE_OPTIONS: { value: BrushTexture; label: string }[] = [
   { value: "dots", label: "斑点" },
 ];
 
-type TabId = "tip" | "shape" | "scatter" | "texture" | "color" | "transfer" | "smoothing";
+type TabId = "tip" | "shape" | "scatter" | "texture" | "color" | "transfer" | "smoothing" | "symmetry";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "tip", label: "笔尖" },
@@ -112,6 +112,14 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "color", label: "颜色" },
   { id: "transfer", label: "传递" },
   { id: "smoothing", label: "稳定" },
+  { id: "symmetry", label: "对称" },
+];
+
+const SYMMETRY_OPTIONS: { value: NonNullable<BrushSettings["symmetry"]>; label: string; hint: string }[] = [
+  { value: "none", label: "关", hint: "正常单笔" },
+  { value: "vertical", label: "左右", hint: "沿画布竖中轴镜像" },
+  { value: "horizontal", label: "上下", hint: "沿画布横中轴镜像" },
+  { value: "both", label: "四向", hint: "左右 + 上下，一笔四落" },
 ];
 
 function Slider({
@@ -409,6 +417,29 @@ export function BrushStudio({
                 />
               </div>
               <p className="bp-note">想最跟手就把防抖拉到 0；手抖厉害再往 10–20 加。</p>
+            </>
+          )}
+
+          {tab === "symmetry" && (
+            <>
+              <div className="bp-wide">
+                <span className="bp-label">对称落笔</span>
+                <div className="bp-seg">
+                  {SYMMETRY_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      className={(brush.symmetry ?? "none") === opt.value ? "on" : ""}
+                      title={opt.hint}
+                      onClick={() => onChange({ symmetry: opt.value })}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <p className="bp-note">
+                镜像轴是当前画布中线：格内聚焦按单格算，多格并集按并集外框算。一笔落下会同时补镜像点，仍只占一步撤销。
+              </p>
             </>
           )}
         </div>

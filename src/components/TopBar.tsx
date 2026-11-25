@@ -16,6 +16,7 @@ interface Props {
   onView: (v: ViewKind) => void;
   onWorldMap: () => void;
   onTogglePanel: () => void;
+  onToggleSidebar?: () => void;
   onToggleTheme: () => void;
   onSettings: () => void;
   onExport: () => void;
@@ -42,6 +43,7 @@ export function TopBar(props: Props) {
     onView,
     onWorldMap,
     onTogglePanel,
+    onToggleSidebar,
     onToggleTheme,
     onSettings,
     onExport,
@@ -70,6 +72,7 @@ export function TopBar(props: Props) {
 
   const items: MenuItem[] = [
     { label: t("设置封面…"), icon: "image", onClick: onPickCover },
+    { label: t("导出…"), icon: "export", onClick: onExport },
     { label: t("书籍设置…"), icon: "edit", onClick: onBookSettings },
     { label: t("副文本 · Markdown…"), icon: "file", onClick: onMatter },
     { label: t("导入书稿…"), icon: "download", onClick: onImport },
@@ -83,6 +86,9 @@ export function TopBar(props: Props) {
   return (
     <header className="topbar">
       <div className="topbar-left">
+        <button className="icon-btn topbar-nav-toggle" title={t("目录")} onClick={onToggleSidebar}>
+          <Icon name="outline" size={17} />
+        </button>
         <button className="icon-btn" title={t("回到书架")} onClick={onBack}>
           <Icon name="book" size={17} />
         </button>

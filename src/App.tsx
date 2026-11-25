@@ -254,9 +254,11 @@ export default function App() {
   const [loreMode, setLoreMode] = useState<"cards" | "graph" | "map">("cards");
   const [focus, setFocus] = useState(false);
   const [panel, setPanel] = useState(true);
+  const [mobileNav, setMobileNav] = useState(false);
 
   useEffect(() => {
     if (view === "write" && project?.meta.kind === "comic") setPanel(false);
+    setMobileNav(false);
   }, [view, project?.meta.kind, project?.path]);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [snapshots, setSnapshots] = useState<SnapshotInfo[]>([]);
@@ -353,6 +355,7 @@ export default function App() {
 
   const toastSeq = useRef(0);
   const projectRef = useRef<Project | null>(null);
+  const packageInputRef = useRef<HTMLInputElement | null>(null);
   const activeRef = useRef<string | null>(null);
   const editorRef = useRef<EditorHandle | null>(null);
   const lastSaved = useRef<Record<string, string>>({});
@@ -940,6 +943,32 @@ export default function App() {
       }
     },
     [commit, refreshBooks, saveAll, toast],
+  );
+
+  /** 浏览器或系统下载下来的 .chapterpack 从 file input 读成 base64，
+   * 交给 Rust 落成新书；不走 Android SAF 的 content:// 路径。 */
+  const importPackageFile = useCallback(
+    async (file: File) => {
+      toast(`正在导入 ${file.name}…`);
+      try {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ""));
+          reader.onerror = () => reject(reader.error || new Error("读不到这个文件"));
+          reader.readAsDataURL(file);
+        });
+        const comma = dataUrl.indexOf(",");
+        if (comma < 0) throw new Error("这个文件不是同步包");
+        const path = await api.importChapterpack(dataUrl.slice(comma + 1));
+        await refreshBooks();
+        toast("同步包已导入", {
+          action: { label: "打开", run: () => void openProject(path, { skipSave: true }) },
+        });
+      } catch (e) {
+        toast(`导入同步包失败：${errText(e)}`, { warn: true });
+      }
+    },
+    [openProject, refreshBooks, toast],
   );
 
   const backToShelf = useCallback(async () => {
@@ -2214,6 +2243,11 @@ export default function App() {
     [flat],
   );
 
+  const currentBookSummary = useMemo(
+    () => books.find((b) => project && b.path === project.path) ?? null,
+    [books, project?.path],
+  );
+
   const todayAdded = useMemo(() => {
     if (!project) return 0;
     const today = dateKey();
@@ -2257,6 +2291,17 @@ export default function App() {
   return (
     <div className="app">
       <AmbientBackdrop scene={scene} />
+      <input
+        ref={packageInputRef}
+        type="file"
+        accept=".chapterpack,.zip,application/zip,application/octet-stream"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.currentTarget.value = "";
+          if (file) void importPackageFile(file);
+        }}
+      />
       {project ? (
         intro ? (
           <Suspense fallback={<div className="lazy-fallback">{t("正在翻开这本书…")}</div>}>
@@ -2266,6 +2311,9 @@ export default function App() {
             coverUrl={coverUrl}
             activeId={activeId}
             theme={theme}
+            comicPages={currentBookSummary?.comicPages ?? 0}
+            comicPanels={currentBookSummary?.comicPanels ?? 0}
+            comicBalloons={currentBookSummary?.comicBalloons ?? 0}
             onBack={backToShelf}
             onSelectChapter={(id) => void enterChapter(id)}
             onBookSettings={() => setMetaDialog(true)}
@@ -2277,7 +2325,7 @@ export default function App() {
           />
           </Suspense>
         ) : (
-        <div className={`workspace${focus ? " focus" : ""}`}>
+        <div className={`workspace${focus ? " focus" : ""}${mobileNav ? " mobile-nav" : ""}`}>
           <TopBar
             meta={project.meta}
             coverUrl={coverUrl}
@@ -2288,7 +2336,13 @@ export default function App() {
             theme={theme}
             onView={changeView}
             onWorldMap={() => changeView("lore", "map")}
-            onTogglePanel={() => setPanel((p) => !p)}
+            onTogglePanel={() => {
+              if (window.matchMedia("(max-width: 820px)").matches) {
+                setMobileNav(false);
+              }
+              setPanel((p) => !p);
+            }}
+            onToggleSidebar={() => setMobileNav((v) => !v)}
             onToggleTheme={toggleTheme}
             onSettings={() => openSettings()}
             onExport={() => {
@@ -2313,10 +2367,16 @@ export default function App() {
           />
 
           <div className="ws-body">
+            {mobileNav && (
+              <button className="mobile-nav-scrim" aria-label="关闭目录" onClick={() => setMobileNav(false)} />
+            )}
             <Sidebar
               outline={project.outline}
               activeId={activeId}
               bookWords={bookWords}
+              bookKind={project.meta.kind ?? "novel"}
+              comicPages={currentBookSummary?.comicPages ?? 0}
+              comicPanels={currentBookSummary?.comicPanels ?? 0}
               onSelectChapter={selectChapter}
               onToggleVolume={toggleVolume}
               onAddVolume={addVolume}
@@ -2515,6 +2575,7 @@ export default function App() {
           onOpen={(b) => openProject(b.path)}
           onNew={() => setModal("new")}
           onImport={() => void pickImport("new")}
+          onImportPackage={() => packageInputRef.current?.click()}
           onWorkspace={() => setHomeMode("workspace")}
           onTransfer={() => {
             setTransferBookPath(null);

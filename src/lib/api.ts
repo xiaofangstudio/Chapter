@@ -122,6 +122,8 @@ export const api = {
   transferConfirm: () => invoke<TransferSnapshot>("transfer_confirm"),
   transferCancel: () => invoke<TransferSnapshot>("transfer_cancel"),
   transferClose: () => invoke<void>("transfer_close"),
+  importChapterpack: (data: string) =>
+    invoke<string>("import_chapterpack", { data }),
 };
 
 export function errText(e: unknown): string {

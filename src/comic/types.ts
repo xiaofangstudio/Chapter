@@ -1,6 +1,27 @@
 export type ComicFrameShape = "rect" | "none" | "quad";
 export type ComicImageFit = "contain" | "cover" | "stretch";
 export type ComicBalloonShape = "ellipse" | "rect" | "thought";
+export type ComicBlendMode =
+  | "normal"
+  | "multiply"
+  | "screen"
+  | "overlay"
+  | "darken"
+  | "lighten"
+  | "color-dodge"
+  | "color-burn"
+  | "hard-light"
+  | "soft-light"
+  | "difference"
+  | "hue"
+  | "saturation"
+  | "color"
+  | "luminosity"
+  | "linear-burn"
+  | "linear-dodge"
+  | "linear-light"
+  | "pin-light"
+  | "hard-mix";
 
 export interface ComicLayerMeta {
   id: string;
@@ -9,6 +30,12 @@ export interface ComicLayerMeta {
   visible: boolean;
   opacity: number;
   locked?: boolean;
+  /** 与下层合成方式，缺省视为 normal。 */
+  blendMode?: ComicBlendMode;
+  /** 只作用于下一层的不透明像素。 */
+  clipping?: boolean;
+  /** 锁定透明：落笔只能改已有像素，不能扩大 alpha。 */
+  alphaLocked?: boolean;
 }
 
 export interface ComicFrame {
@@ -64,6 +91,22 @@ export interface ComicPageFrame {
   stroke: number;
 }
 
+/** 页级跨格线稿：多格并集聚焦时，把几格当成一张纸来画。 */
+export interface ComicJointLayer {
+  id: string;
+  name: string;
+  /** 创建时绑定的格；格移动/删除后仍以 rect 为准，frameIds 用于重建并集。 */
+  frameIds: string[];
+  rect: { x: number; y: number; w: number; h: number };
+  /** 跨格连画：打开后笔迹可以穿过相邻选中格之间的格缝。 */
+  crossPanel: boolean;
+  visible: boolean;
+  opacity: number;
+  locked?: boolean;
+  blendMode?: ComicBlendMode;
+  createdAt: number;
+}
+
 export interface ComicPage {
   version: number;
   id: string;
@@ -74,6 +117,8 @@ export interface ComicPage {
   /** 整页大外框；老页面没有这个字段，载入时按 3.5% 页边生成。 */
   pageFrame?: ComicPageFrame;
   frames: ComicFrame[];
+  /** 页级跨格线稿；老页面没有这个字段。 */
+  jointLayers?: ComicJointLayer[];
   balloons: ComicBalloon[];
   images: ComicImageItem[];
   createdAt: number;
