@@ -67,8 +67,20 @@ export function ImportDialog({ doc, mode, bookTitle, onClose, onImport }: Props)
   const [hint, setHint] = useState("");
   const [busy, setBusy] = useState(false);
   const [closing, setClosing] = useState(false);
+  const [isPhone, setIsPhone] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(max-width: 820px)").matches,
+  );
+  const [mobilePane, setMobilePane] = useState<"result" | "source">("result");
   const closeTimer = useRef<number | undefined>(undefined);
   const areaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 820px)");
+    const sync = () => setIsPhone(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
 
   const saveDraft = () => {
     try {
@@ -256,7 +268,11 @@ export function ImportDialog({ doc, mode, bookTitle, onClose, onImport }: Props)
             </label>
             <div className="import-tip">
               <b>{t("怎么分章")}</b>
-              <span>{t("在左边框选一行标题，按 Enter 就切一章；形如「第X卷」的标题会自动成为卷。")}</span>
+              <span>
+                {isPhone
+                  ? t("已经自动按标题分好章；在「分章结果」里核对，不满意就去「原文」长按标题，再点「设为标题」。")
+                  : t("在左边框选一行标题，按 Enter 就切一章；形如「第X卷」的标题会自动成为卷。")}
+              </span>
             </div>
           </div>
         )}
@@ -264,14 +280,39 @@ export function ImportDialog({ doc, mode, bookTitle, onClose, onImport }: Props)
         {mode === "append" && (
           <div className="import-tip import-tip-wide">
             <b>{t("怎么分章")}</b>
-            <span>{t("框选标题按 Enter 标记；导入后会作为新卷追加到")}《{bookTitle}》，{t("不会覆盖原稿。")}</span>
+            <span>
+              {isPhone
+                ? t("自动分章已排好；核对后直接完成，会作为新卷追加到") + `《${bookTitle}》`
+                : t("框选标题按 Enter 标记；导入后会作为新卷追加到") + `《${bookTitle}》，${t("不会覆盖原稿。")}`}
+            </span>
           </div>
         )}
 
-        <div className="import-split">
+        {isPhone && (
+          <div className="import-mobile-tabs" role="tablist" aria-label={t("分章视图")}>
+            <button
+              type="button"
+              className={mobilePane === "result" ? "on" : ""}
+              onClick={() => setMobilePane("result")}
+            >
+              {t("分章结果")}
+            </button>
+            <button
+              type="button"
+              className={mobilePane === "source" ? "on" : ""}
+              onClick={() => setMobilePane("source")}
+            >
+              {t("原文 · 手动补切点")}
+            </button>
+          </div>
+        )}
+
+        <div className={`import-split mobile-${mobilePane}`}>
           <section className="import-paper-wrap">
             <div className="import-paper-bar">
-              <span className={`import-status${hint ? " on" : ""}`}>{hint || t("框选标题，按 Enter")}</span>
+              <span className={`import-status${hint ? " on" : ""}`}>
+                {hint || (isPhone ? t("长按选中标题，再点「设为标题」") : t("框选标题，按 Enter"))}
+              </span>
               <div className="import-bar-actions">
                 <button className="btn btn-ghost btn-xs" onClick={undoMark} disabled={!markers.length}>
                   {t("撤销标记")}
@@ -294,6 +335,12 @@ export function ImportDialog({ doc, mode, bookTitle, onClose, onImport }: Props)
                 >
                   {t("清空")}
                 </button>
+                {isPhone && (
+                  <button className="btn btn-outline btn-xs import-mark" onClick={markSelection}>
+                    <Icon name="plus" size={12} />
+                    {t("设为标题")}
+                  </button>
+                )}
               </div>
             </div>
             <textarea
@@ -336,7 +383,11 @@ export function ImportDialog({ doc, mode, bookTitle, onClose, onImport }: Props)
                     <Icon name="outline" size={22} />
                   </div>
                   <b>{t("还没有切点")}</b>
-                  <p>{t("在左侧找一行标题，按住鼠标框住它，按 Enter。第一个标题到第二个标题之间，就是这一章的正文。")}</p>
+                  <p>
+                    {isPhone
+                      ? t("这份稿子没认出一眼就能当标题的行。去「原文」长按一行标题，再点「设为标题」；也可以直接完成，整篇作为一章。")
+                      : t("在左侧找一行标题，按住鼠标框住它，按 Enter。第一个标题到第二个标题之间，就是这一章的正文。")}
+                  </p>
                   <p className="muted">{t("也可以直接按「完成」，整篇会作为一章导入。")}</p>
                 </div>
               ) : (
@@ -455,13 +506,19 @@ export function ImportDialog({ doc, mode, bookTitle, onClose, onImport }: Props)
         </div>
 
         <footer className="import-foot">
-          <div className="import-foot-note">
-            <kbd>Enter</kbd> {t("标记标题")}
-            <span>·</span>
-            <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd>/<kbd>X</kbd> {t("复制粘贴")}
-            <span>·</span>
-            {t("关闭会自动保存")}
-          </div>
+          {isPhone ? (
+            <div className="import-foot-note mobile">
+              {t("已自动识别")} {sections.length} {t("章 · 核对后完成导入")}
+            </div>
+          ) : (
+            <div className="import-foot-note">
+              <kbd>Enter</kbd> {t("标记标题")}
+              <span>·</span>
+              <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd>/<kbd>X</kbd> {t("复制粘贴")}
+              <span>·</span>
+              {t("关闭会自动保存")}
+            </div>
+          )}
           <div className="import-foot-actions">
             <button className="btn btn-ghost" onClick={close}>
               {t("取消")}

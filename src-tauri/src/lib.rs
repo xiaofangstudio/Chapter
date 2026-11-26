@@ -22,6 +22,7 @@ mod sync;
 const BOOK_FILE: &str = "book.json";
 const OUTLINE_FILE: &str = "outline.json";
 const LORE_FILE: &str = "lore.json";
+const PROOFREAD_FILE: &str = "proofread.json";
 
 /// Android 没有 Documents 可写目录，启动时把 App 私有数据目录注入这里。
 static APP_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -190,6 +191,7 @@ struct ProjectPayload {
     book: String,
     outline: String,
     lore: String,
+    proofread: String,
     chapters: Vec<ChapterPayload>,
 }
 
@@ -345,6 +347,7 @@ fn load_project(project: &Path) -> Result<ProjectPayload, String> {
         book: read_text(&project.join(BOOK_FILE)).unwrap_or_else(|_| "{}".into()),
         outline: read_text(&project.join(OUTLINE_FILE)).unwrap_or_else(|_| "{}".into()),
         lore: read_text(&project.join(LORE_FILE)).unwrap_or_else(|_| "{\"entries\":[]}".into()),
+        proofread: read_text(&project.join(PROOFREAD_FILE)).unwrap_or_else(|_| "{}".into()),
         chapters,
     })
 }
@@ -1089,6 +1092,118 @@ fn comic_save_thumbnail(path: String, page_id: String, data_url: String) -> Resu
         .map_err(|e| format!("保存缩略图失败：{e}"))
 }
 
+fn safe_export_name(raw: &str, fallback: &str) -> String {
+    let cleaned: String = raw
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    let trimmed = cleaned.trim().trim_matches('.');
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn export_temp_root() -> PathBuf {
+    std::env::temp_dir().join(format!("chapter-comic-export-{}", now_ms()))
+}
+
+/// 漫画导出第一步：开一个临时目录，逐页写 PNG，避免整本一次性塞进内存。
+#[tauri::command]
+fn comic_export_begin() -> Result<String, String> {
+    let dir = export_temp_root();
+    ensure_dir(&dir)?;
+    Ok(dir.to_string_lossy().to_string())
+}
+
+/// 漫画导出第二步：每渲染好一页就落一张 PNG 到临时目录。
+#[tauri::command]
+fn comic_export_add_page(temp_dir: String, name: String, data_url: String) -> Result<(), String> {
+    let dir = PathBuf::from(&temp_dir);
+    ensure_dir(&dir)?;
+    let file_name = safe_export_name(&name, "page.png");
+    let file_name = if file_name.to_ascii_lowercase().ends_with(".png") {
+        file_name
+    } else {
+        format!("{file_name}.png")
+    };
+    let bytes = decode_data_url(&data_url)?;
+    fs::write(dir.join(file_name), bytes).map_err(|e| format!("写入导出图片失败：{e}"))
+}
+
+/// 漫画导出第三步：把逐页 PNG 打成 ZIP，清理临时目录。单页导出走 comic_export_single。
+#[tauri::command]
+fn comic_export_finish(temp_dir: String, dest: String) -> Result<usize, String> {
+    let dir = PathBuf::from(&temp_dir);
+    let dest_path = PathBuf::from(&dest);
+    if let Some(parent) = dest_path.parent() {
+        ensure_dir(parent)?;
+    }
+    let file = File::create(&dest_path).map_err(|e| format!("创建导出包失败：{e}"))?;
+    let mut zip = ZipWriter::new(file);
+    let opt = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+    let mut names: Vec<String> = fs::read_dir(&dir)
+        .map_err(|e| format!("读取导出临时目录失败：{e}"))?
+        .flatten()
+        .filter(|e| e.path().is_file())
+        .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
+        .collect();
+    names.sort();
+    let mut count = 0usize;
+    for name in names {
+        let bytes = fs::read(dir.join(&name)).map_err(|e| format!("读取导出图片失败：{e}"))?;
+        zip.start_file(name, opt)
+            .map_err(|e| format!("写导出包失败：{e}"))?;
+        zip.write_all(&bytes)
+            .map_err(|e| format!("写导出包失败：{e}"))?;
+        count += 1;
+    }
+    zip.finish().map_err(|e| format!("收尾导出包失败：{e}"))?;
+    let _ = fs::remove_dir_all(&dir);
+    Ok(count)
+}
+
+/// 导出中途取消或失败时清掉临时页图。
+#[tauri::command]
+fn comic_export_discard(temp_dir: String) {
+    let _ = fs::remove_dir_all(PathBuf::from(temp_dir));
+}
+
+/// 单页直接写图片文件。
+#[tauri::command]
+fn comic_export_single(dest: String, name: String, data_url: String) -> Result<String, String> {
+    let dest_path = PathBuf::from(&dest);
+    if let Some(parent) = dest_path.parent() {
+        ensure_dir(parent)?;
+    }
+    let bytes = decode_data_url(&data_url)?;
+    fs::write(&dest_path, bytes).map_err(|e| format!("写入图片失败：{e}"))?;
+    Ok(name)
+}
+
+/// 手机上没有可写的“文档”目录时，把导出文件落到 App 自己的导出目录，交给系统打开/分享。
+#[tauri::command]
+fn comic_export_to_app(name: String, data_url: Option<String>, temp_dir: Option<String>) -> Result<String, String> {
+    let dir = config_dir().join("Exports");
+    ensure_dir(&dir)?;
+    let file_name = safe_export_name(&name, "comic-export");
+    let dest = dir.join(file_name);
+    if let Some(url) = data_url {
+        let bytes = decode_data_url(&url)?;
+        fs::write(&dest, bytes).map_err(|e| format!("写入图片失败：{e}"))?;
+    } else if let Some(temp) = temp_dir {
+        comic_export_finish(temp, dest.to_string_lossy().to_string())?;
+    } else {
+        return Err("没有可导出的内容".into());
+    }
+    Ok(dest.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 fn comic_new_page(
     path: String,
@@ -1256,7 +1371,7 @@ fn open_book(path: String) -> Result<ProjectPayload, String> {
 #[tauri::command]
 fn save_json(path: String, file: String, json: String) -> Result<(), String> {
     let name = match file.as_str() {
-        "book.json" | "outline.json" | "lore.json" => file,
+        "book.json" | "outline.json" | "lore.json" | "proofread.json" => file,
         _ => return Err("不允许写入该文件".into()),
     };
     let dir = PathBuf::from(&path);
@@ -1478,7 +1593,7 @@ fn create_snapshot(path: String, label: String) -> Result<Vec<SnapshotInfo>, Str
     let name = now_ms().to_string();
     let snap = root.join(&name);
     ensure_dir(&snap)?;
-    for f in [BOOK_FILE, OUTLINE_FILE, LORE_FILE] {
+    for f in [BOOK_FILE, OUTLINE_FILE, LORE_FILE, PROOFREAD_FILE] {
         let src = dir.join(f);
         if src.is_file() {
             let _ = fs::copy(&src, snap.join(f));
@@ -1553,7 +1668,7 @@ fn restore_snapshot(path: String, name: String) -> Result<ProjectPayload, String
     }
     // 恢复前先给当前状态存一份，避免误点丢稿
     let _ = create_snapshot(path.clone(), "恢复前自动备份".into());
-    for f in [BOOK_FILE, OUTLINE_FILE, LORE_FILE] {
+    for f in [BOOK_FILE, OUTLINE_FILE, LORE_FILE, PROOFREAD_FILE] {
         let src = snap.join(f);
         if src.is_file() {
             fs::copy(&src, dir.join(f)).map_err(|e| format!("恢复失败：{e}"))?;
@@ -1585,6 +1700,16 @@ struct OutlineChapter {
     id: String,
     #[serde(default)]
     title: String,
+    #[serde(default)]
+    footnotes: Vec<OutlineFootnote>,
+}
+
+#[derive(Deserialize, Default, Clone)]
+struct OutlineFootnote {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    text: String,
 }
 
 #[derive(Deserialize, Default)]
@@ -1680,7 +1805,7 @@ fn strip_md_plain_line(line: &str) -> String {
     } else {
         body
     };
-    strip_inline(&strip_md_links(body))
+    strip_inline(&strip_md_links(body)).replace("[^", "[")
 }
 
 fn strip_md_body(md: &str) -> String {
@@ -1771,6 +1896,13 @@ fn build_markdown(project: &Path, title: &str, author: &str, plain: bool) -> Str
                 out.push_str(&content);
                 out.push('\n');
             }
+            if plain && !ch.footnotes.is_empty() {
+                out.push('\n');
+                for (i, note) in ch.footnotes.iter().enumerate() {
+                    out.push_str(&format!("[{}] {}\n", i + 1, note.text.trim()));
+                }
+                out.push('\n');
+            }
         }
     }
     if !back.is_empty() {
@@ -1835,6 +1967,53 @@ fn md_inline(s: &str) -> String {
     out
 }
 
+fn with_footnote_refs(html: &str) -> String {
+    let chars: Vec<char> = html.chars().collect();
+    let mut out = String::with_capacity(html.len());
+    let mut i = 0usize;
+    while i < chars.len() {
+        if chars[i] == '[' && chars.get(i + 1) == Some(&'^') {
+            let mut j = i + 2;
+            let mut digits = String::new();
+            while j < chars.len() && chars[j].is_ascii_digit() {
+                digits.push(chars[j]);
+                j += 1;
+            }
+            if !digits.is_empty() && chars.get(j) == Some(&']') {
+                out.push_str(&format!(
+                    "<sup class=\"fn-ref\">{}</sup>",
+                    xml_escape(&digits)
+                ));
+                i = j + 1;
+                continue;
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
+fn md_line(line: &str) -> String {
+    with_footnote_refs(&md_inline(line))
+}
+
+fn footnote_section(notes: &[OutlineFootnote]) -> String {
+    if notes.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("<section class=\"footnotes\"><h4>脚注</h4><ol>\n");
+    for note in notes {
+        out.push_str(&format!(
+            "<li id=\"fn-{}\">{}</li>\n",
+            xml_escape(&note.id),
+            xml_escape(note.text.trim())
+        ));
+    }
+    out.push_str("</ol></section>\n");
+    out
+}
+
 fn md_to_xhtml(md: &str) -> String {
     let mut out = String::new();
     let mut para: Vec<String> = Vec::new();
@@ -1847,7 +2026,7 @@ fn md_to_xhtml(md: &str) -> String {
         }
         let text = para
             .iter()
-            .map(|l| md_inline(l))
+            .map(|l| md_line(l))
             .collect::<Vec<_>>()
             .join("<br/>");
         out.push_str(&format!("<p>{text}</p>\n"));
@@ -1858,7 +2037,7 @@ fn md_to_xhtml(md: &str) -> String {
             if !items.is_empty() {
                 out.push_str(&format!("<{kind}>\n"));
                 for it in items {
-                    out.push_str(&format!("<li>{}</li>\n", md_inline(&it)));
+                    out.push_str(&format!("<li>{}</li>\n", md_line(&it)));
                 }
                 out.push_str(&format!("</{kind}>\n"));
             }
@@ -1870,7 +2049,7 @@ fn md_to_xhtml(md: &str) -> String {
         }
         let text = quote
             .iter()
-            .map(|l| md_inline(l))
+            .map(|l| md_line(l))
             .collect::<Vec<_>>()
             .join("<br/>");
         out.push_str(&format!("<blockquote><p>{text}</p></blockquote>\n"));
@@ -1933,7 +2112,7 @@ fn md_to_xhtml(md: &str) -> String {
             let level = (hashes + 1).min(6);
             out.push_str(&format!(
                 "<h{level}>{}</h{level}>\n",
-                md_inline(trimmed[hashes..].trim())
+                md_line(trimmed[hashes..].trim())
             ));
             continue;
         }
@@ -2001,11 +2180,16 @@ fn find_cover(project: &Path) -> Option<PathBuf> {
 
 fn build_epub(project: &Path, dest: &Path, title: &str, author: &str) -> Result<String, String> {
     let outline = load_outline(project);
-    let mut flat: Vec<(String, String, String)> = Vec::new(); // 卷名, 章名, 正文
+    let mut flat: Vec<(String, String, String, Vec<OutlineFootnote>)> = Vec::new(); // 卷名, 章名, 正文, 脚注
     for vol in &outline.volumes {
         for ch in &vol.chapters {
             let body = read_chapter_body(&chapters_dir(project).join(format!("{}.md", ch.id)));
-            flat.push((vol.title.clone(), ch.title.clone(), body));
+            flat.push((
+                vol.title.clone(),
+                ch.title.clone(),
+                body,
+                ch.footnotes.clone(),
+            ));
         }
     }
     if flat.is_empty() {
@@ -2039,6 +2223,10 @@ body { font-family: "Songti SC", "Source Han Serif SC", "SimSun", serif; line-he
 h2 { font-size: 1.35em; margin: 1.2em 0 1em; padding-bottom: .5em; border-bottom: 1px solid #e8dcc8; letter-spacing: .04em; }
 h3, h4 { font-size: 1.08em; margin: 1.2em 0 .6em; }
 p { margin: 0 0 .72em; text-indent: 2em; }
+sup.fn-ref { font-size: .72em; vertical-align: super; line-height: 0; margin: 0 .12em; }
+section.footnotes { margin-top: 1.6em; border-top: 1px solid #e8dcc8; padding-top: .8em; font-size: .86em; }
+section.footnotes h4 { margin: 0 0 .5em; font-weight: 600; letter-spacing: .08em; }
+section.footnotes li { margin: 0 0 .3em; text-indent: 0; }
 blockquote { margin: 1em 0; padding: .4em 1em; border-left: 3px solid #c96a1f; color: #6b5c4b; font-style: italic; }
 hr { border: 0; border-top: 1px solid #e8dcc8; margin: 1.4em 2em; }
 ul, ol { margin: .6em 0 .9em 1.6em; }
@@ -2090,8 +2278,9 @@ ul, ol { margin: .6em 0 .9em 1.6em; }
         spine.push_str("    <itemref idref=\"front\"/>\n");
     }
 
-    for (i, (_vol, ch_title, body)) in flat.iter().enumerate() {
+    for (i, (_vol, ch_title, body, notes)) in flat.iter().enumerate() {
         let name = format!("chap_{:03}.xhtml", i + 1);
+        let chapter_html = format!("{}{}", md_to_xhtml(body), footnote_section(notes));
         let page = format!(
             r#"<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
@@ -2103,7 +2292,7 @@ ul, ol { margin: .6em 0 .9em 1.6em; }
 </body></html>"#,
             xml_escape(ch_title),
             xml_escape(ch_title),
-            md_to_xhtml(body)
+            chapter_html
         );
         add_zip_file(
             &mut zip,
@@ -2307,7 +2496,7 @@ ul, ol { margin: .6em 0 .9em 1.6em; }
 
     // 老阅读器兼容的 toc.ncx
     let mut ncx_points = String::new();
-    for (i, (_, ch_title, _)) in flat.iter().enumerate() {
+    for (i, (_, ch_title, _, _)) in flat.iter().enumerate() {
         ncx_points.push_str(&format!(
             r#"    <navPoint id="np{}" playOrder="{}"><navLabel><text>{}</text></navLabel><content src="chap_{:03}.xhtml"/></navPoint>
 "#,
@@ -2341,7 +2530,7 @@ ul, ol { margin: .6em 0 .9em 1.6em; }
     Ok(format!(
         "已导出 {} 章 · {} 字",
         flat.len(),
-        flat.iter().map(|(_, _, b)| count_words(b)).sum::<u64>()
+        flat.iter().map(|(_, _, b, _)| count_words(b)).sum::<u64>()
     ))
 }
 
@@ -2778,20 +2967,22 @@ fn print_pdf(doc: &PrintDoc, dest: &Path) -> Result<(), String> {
             .replace('\\', "/")
             .replace(' ', "%20")
     );
+    let profile = tmp.join("profile");
+    ensure_dir(&profile)?;
     let out = Command::new(browser)
         .args([
-            "--headless=new",
+            "--headless",
             "--disable-gpu",
             "--no-first-run",
             "--no-default-browser-check",
             "--no-pdf-header-footer",
             "--print-to-pdf-no-header",
+            &format!("--user-data-dir={}", profile.to_string_lossy()),
             &format!("--print-to-pdf={}", dest.to_string_lossy()),
             &file_url,
         ])
         .output()
         .map_err(|e| format!("启动 Edge 失败：{}", e))?;
-    let _ = fs::remove_dir_all(&tmp);
     if !out.status.success() {
         let tail = String::from_utf8_lossy(&out.stderr);
         return Err(format!(
@@ -2799,7 +2990,18 @@ fn print_pdf(doc: &PrintDoc, dest: &Path) -> Result<(), String> {
             tail.chars().rev().take(300).collect::<String>().chars().rev().collect::<String>()
         ));
     }
-    let size = fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
+    let size = {
+        let mut size = 0u64;
+        for _ in 0..24 {
+            size = fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
+            if size > 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+        size
+    };
+    let _ = fs::remove_dir_all(&tmp);
     if size == 0 {
         return Err("PDF 生成失败：输出为空".into());
     }
@@ -3132,6 +3334,16 @@ fn export_book(path: String, format: String, dest: String) -> Result<String, Str
 }
 
 #[tauri::command]
+fn export_book_to_app(path: String, format: String, file_name: String) -> Result<String, String> {
+    let dir = config_dir().join("Exports");
+    ensure_dir(&dir)?;
+    let name = safe_export_name(&file_name, &format!("book.{format}"));
+    let target = dir.join(name);
+    export_book(path, format, target.to_string_lossy().to_string())?;
+    Ok(target.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 fn count_text(text: String) -> u64 {
     count_words(&text)
 }
@@ -3234,9 +3446,8 @@ fn strip_word_xml(xml: &str) -> String {
     cleaned.trim().to_string()
 }
 
-fn read_docx(path: &Path) -> Result<String, String> {
-    let file = File::open(path).map_err(|e| format!("打不开 Word 文件：{e}"))?;
-    let mut zip = zip::ZipArchive::new(file).map_err(|e| format!("Word 文件结构损坏：{e}"))?;
+fn read_docx_reader<R: std::io::Read + std::io::Seek>(reader: R) -> Result<String, String> {
+    let mut zip = zip::ZipArchive::new(reader).map_err(|e| format!("Word 文件结构损坏：{e}"))?;
     let mut xml = String::new();
     {
         let mut entry = zip
@@ -3251,6 +3462,27 @@ fn read_docx(path: &Path) -> Result<String, String> {
         return Err("Word 里没有可导入的文字".into());
     }
     Ok(text)
+}
+
+fn import_doc_from_bytes(name: String, ext: String, bytes: &[u8]) -> Result<ImportDoc, String> {
+    if bytes.is_empty() {
+        return Err("文件是空的".into());
+    }
+    let ext = ext.trim_start_matches('.').to_lowercase();
+    let text = match ext.as_str() {
+        "txt" | "md" | "markdown" => decode_plain(bytes),
+        "docx" => read_docx_reader(std::io::Cursor::new(bytes))?,
+        "doc" => return Err("旧版 .doc 暂不支持，请在 Word 里另存为 .docx 再导入".into()),
+        _ => return Err("只支持 TXT、Markdown、DOCX".into()),
+    };
+    if text.trim().is_empty() {
+        return Err("文件里没有可导入的文字".into());
+    }
+    Ok(ImportDoc {
+        name,
+        text: text.replace("\r\n", "\n").replace('\r', "\n"),
+        format: ext,
+    })
 }
 
 #[tauri::command]
@@ -3269,25 +3501,21 @@ fn read_import_file(path: String) -> Result<ImportDoc, String> {
         .and_then(|s| s.to_str())
         .unwrap_or("导入稿")
         .to_string();
-    let text = match ext.as_str() {
-        "txt" | "md" | "markdown" => {
-            let bytes = fs::read(&p).map_err(|e| format!("读取文件失败：{e}"))?;
-            decode_plain(&bytes)
-        }
-        "docx" => read_docx(&p)?,
-        "doc" => {
-            return Err("旧版 .doc 暂不支持，请在 Word 里另存为 .docx 再导入".into());
-        }
-        _ => return Err("只支持 TXT、Markdown、DOCX".into()),
-    };
-    if text.trim().is_empty() {
-        return Err("文件里没有可导入的文字".into());
+    let bytes = fs::read(&p).map_err(|e| format!("读取文件失败：{e}"))?;
+    import_doc_from_bytes(name, ext, &bytes)
+}
+
+/// Android 的文件选择器会返回 content://，不能直接当路径读。
+/// 前端把文件读成 base64 交给这里解包，仍然由同一套 Rust 解析器分章。
+#[tauri::command]
+fn read_import_bytes(name: String, format: String, data: String) -> Result<ImportDoc, String> {
+    if data.len() > 96 * 1024 * 1024 {
+        return Err("文件太大，请先拆分后再导入".into());
     }
-    Ok(ImportDoc {
-        name,
-        text: text.replace("\r\n", "\n").replace('\r', "\n"),
-        format: ext,
-    })
+    let bytes = B64
+        .decode(data.as_bytes())
+        .map_err(|_| "文件内容读不出来，请重新选择".to_string())?;
+    import_doc_from_bytes(name, format, &bytes)
 }
 
 #[tauri::command]
@@ -4543,6 +4771,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_sharekit::init())
         .setup(|app| {
             use tauri::Manager;
             // Android 的 Documents 不可写；书库与配置统一落在 App 私有目录。
@@ -4591,6 +4820,12 @@ pub fn run() {
             comic_save_page,
             comic_save_asset,
             comic_save_thumbnail,
+            comic_export_begin,
+            comic_export_add_page,
+            comic_export_finish,
+            comic_export_discard,
+            comic_export_single,
+            comic_export_to_app,
             comic_new_page,
             comic_delete_page,
             save_json,
@@ -4606,9 +4841,11 @@ pub fn run() {
             list_snapshots,
             restore_snapshot,
             export_book,
+            export_book_to_app,
             print_export,
             count_text,
             read_import_file,
+        read_import_bytes,
             image_data,
             font_data,
             mcp_status,
@@ -4693,6 +4930,37 @@ mod tests {
         ] {
             assert!(archive.by_name(name).is_ok(), "EPUB 缺少 {name}");
         }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn epub_keeps_footnotes() {
+        let dir = std::env::temp_dir().join(format!("chapter_fn_test_{}", now_ms()));
+        fs::create_dir_all(dir.join("chapters")).unwrap();
+        fs::write(
+            dir.join("book.json"),
+            r#"{"id":"b_fn","title":"脚注书","author":"小方"}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("outline.json"),
+            r#"{"volumes":[{"title":"第一卷","chapters":[{"id":"c1","title":"第一章","footnotes":[{"id":"f1","text":"出处在这里"}]}]}]}"#,
+        )
+        .unwrap();
+        fs::write(dir.join("chapters/c1.md"), "正文里有一处引用[^1]。\n").unwrap();
+        let out = dir.join("out.epub");
+        build_epub(&dir, &out, "脚注书", "小方").unwrap();
+        let file = File::open(&out).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+        let mut html = String::new();
+        archive
+            .by_name("OEBPS/chap_001.xhtml")
+            .unwrap()
+            .read_to_string(&mut html)
+            .unwrap();
+        assert!(html.contains("<sup class=\"fn-ref\">1</sup>"));
+        assert!(html.contains("出处在这里"));
+        assert!(html.contains("class=\"footnotes\""));
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -3,13 +3,23 @@ import type { ReactNode } from "react";
 import type {
   BookMeta,
   Chapter,
+  Lore,
   LoreEntry,
   LoreKind,
+  NumberingRule,
+  Outline,
+  Scene,
   SnapshotInfo,
 } from "../types";
 import { LORE_KINDS } from "../types";
 import { fmtNumber, fmtTime, fmtWords, mdToHtml } from "../lib/text";
 import { t } from "../lib/i18n";
+import {
+  defaultNumbering,
+  normalizeNumbering,
+  previewRenumber,
+  nextChapterTitle,
+} from "../lib/numbering";
 import { Icon } from "./Icon";
 
 /* ───────────────── 基础弹窗 ───────────────── */
@@ -392,7 +402,6 @@ export function PromptDialog({
         {multiline ? (
           <textarea
             className="input"
-            autoFocus
             value={v}
             placeholder={placeholder}
             onChange={(e) => setV(e.target.value)}
@@ -400,7 +409,6 @@ export function PromptDialog({
         ) : (
           <input
             className="input"
-            autoFocus
             value={v}
             placeholder={placeholder}
             onChange={(e) => setV(e.target.value)}
@@ -489,6 +497,7 @@ export function ExportDialog({
   meta,
   chapters,
   words,
+  kind = "novel",
   onClose,
   onExport,
   onPrint,
@@ -496,17 +505,23 @@ export function ExportDialog({
   meta: BookMeta;
   chapters: number;
   words: number;
+  kind?: "novel" | "comic";
   onClose: () => void;
   onExport: (format: string) => void;
   onPrint?: (format: "pdf" | "word") => void;
 }) {
-  const [format, setFormat] = useState("epub");
+  const isComic = kind === "comic";
+  const [format, setFormat] = useState(isComic ? "comic" : "epub");
   const [printTarget, setPrintTarget] = useState<"pdf" | "word">("pdf");
 
   return (
     <Modal
-      title="导出这本书"
-      subtitle="全部在本机完成，不经过任何服务器。"
+      title={isComic ? "导出漫画" : "导出这本书"}
+      subtitle={
+        isComic
+          ? "漫画交付的是整页图片，不是文字稿。"
+          : "全部在本机完成，不经过任何服务器。"
+      }
       onClose={onClose}
       wide
       actions={
@@ -521,67 +536,97 @@ export function ExportDialog({
             <Icon name={format === "print" ? "edit" : "download"} size={15} />
             {format === "print"
               ? t("进入排版")
-              : `导出 ${FORMATS.find((f) => f.id === format)?.name}`}
+              : isComic
+                ? "打开漫画导出"
+                : `导出 ${FORMATS.find((f) => f.id === format)?.name}`}
           </button>
         </>
       }
     >
-      <div className="export-opts">
-        {FORMATS.map((f) => (
-          <button
-            key={f.id}
-            className={`fmt-card${format === f.id ? " on" : ""}`}
-            onClick={() => setFormat(f.id)}
-          >
-            <span className="fmt-ico">
-              <Icon name={f.icon} size={17} />
-            </span>
-            <span className="fmt-text">
-              <b>{f.name}</b>
-              <span>{f.desc}</span>
-            </span>
-            {format === f.id && <Icon name="check" size={16} />}
-          </button>
-        ))}
-      </div>
-
-      <div className="export-summary">
-        <span>
-          《{meta.title || "未命名"}》 · {chapters} 章 · {fmtWords(words)} 字
-        </span>
-        <span>{format === "epub" && meta.cover ? "含封面" : format === "epub" ? "无封面" : ""}</span>
-      </div>
-      {format === "epub" && !meta.cover && (
-        <div style={{ fontSize: 11, color: "var(--text-3)", lineHeight: 1.7 }}>
-          还没设封面。EPUB 会以标题页开头；在书籍菜单里设一张封面再导出会更完整。
-        </div>
-      )}
-
-      {format === "print" && (
-        <div className="print-target">
-          <button
-            className={`print-target-card${printTarget === "pdf" ? " on" : ""}`}
-            onClick={() => setPrintTarget("pdf")}
-          >
-            <span className="fmt-ico"><Icon name="file" size={16} /></span>
+      {isComic ? (
+        <>
+          <div className="export-opts">
+            <button className="fmt-card on" type="button">
+              <span className="fmt-ico">
+                <Icon name="image" size={17} />
+              </span>
+              <span className="fmt-text">
+                <b>整页 PNG 图片</b>
+                <span>可导当前页、当前话逐页、整本逐页；多页打成一个 ZIP，按 01_页名.png 排序。</span>
+              </span>
+              <Icon name="check" size={16} />
+            </button>
+          </div>
+          <div className="export-summary">
             <span>
-              <b>PDF</b>
-              <em>{t("所见即所得，适合直接打印、投稿；插图会一起排进去。")}</em>
+              《{meta.title || "未命名"}》 · {chapters} 话 · 原页 1654×2339
             </span>
-            {printTarget === "pdf" && <Icon name="check" size={15} />}
-          </button>
-          <button
-            className={`print-target-card${printTarget === "word" ? " on" : ""}`}
-            onClick={() => setPrintTarget("word")}
-          >
-            <span className="fmt-ico"><Icon name="edit" size={16} /></span>
+            <span>不含文字稿</span>
+          </div>
+          <div className="comic-export-hint">
+            点下面按钮会回到漫画画布并打开导出面板。导出前会先保存当前页的笔迹和气泡。
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="export-opts">
+            {FORMATS.map((f) => (
+              <button
+                key={f.id}
+                className={`fmt-card${format === f.id ? " on" : ""}`}
+                onClick={() => setFormat(f.id)}
+              >
+                <span className="fmt-ico">
+                  <Icon name={f.icon} size={17} />
+                </span>
+                <span className="fmt-text">
+                  <b>{f.name}</b>
+                  <span>{f.desc}</span>
+                </span>
+                {format === f.id && <Icon name="check" size={16} />}
+              </button>
+            ))}
+          </div>
+
+          <div className="export-summary">
             <span>
-              <b>Word</b>
-              <em>{t("导出可继续编辑的 .docx，分页、字体、插图都保留。")}</em>
+              《{meta.title || "未命名"}》 · {chapters} 章 · {fmtWords(words)} 字
             </span>
-            {printTarget === "word" && <Icon name="check" size={15} />}
-          </button>
-        </div>
+            <span>{format === "epub" && meta.cover ? "含封面" : format === "epub" ? "无封面" : ""}</span>
+          </div>
+          {format === "epub" && !meta.cover && (
+            <div style={{ fontSize: 11, color: "var(--text-3)", lineHeight: 1.7 }}>
+              还没设封面。EPUB 会以标题页开头；在书籍菜单里设一张封面再导出会更完整。
+            </div>
+          )}
+
+          {format === "print" && (
+            <div className="print-target">
+              <button
+                className={`print-target-card${printTarget === "pdf" ? " on" : ""}`}
+                onClick={() => setPrintTarget("pdf")}
+              >
+                <span className="fmt-ico"><Icon name="file" size={16} /></span>
+                <span>
+                  <b>PDF</b>
+                  <em>{t("所见即所得，适合直接打印、投稿；插图会一起排进去。")}</em>
+                </span>
+                {printTarget === "pdf" && <Icon name="check" size={15} />}
+              </button>
+              <button
+                className={`print-target-card${printTarget === "word" ? " on" : ""}`}
+                onClick={() => setPrintTarget("word")}
+              >
+                <span className="fmt-ico"><Icon name="edit" size={16} /></span>
+                <span>
+                  <b>Word</b>
+                  <em>{t("导出可继续编辑的 .docx，分页、字体、插图都保留。")}</em>
+                </span>
+                {printTarget === "word" && <Icon name="check" size={15} />}
+              </button>
+            </div>
+          )}
+        </>
       )}
     </Modal>
   );
@@ -651,23 +696,32 @@ export function SnapshotDialog({
 
 interface BookMetaDialogProps {
   meta: BookMeta;
+  outline: Outline;
   onClose: () => void;
   onSave: (patch: {
     title: string;
     author: string;
     description: string;
     spineColor?: string;
+    numbering?: NumberingRule;
+    renames?: { id: string; title: string }[];
   }) => Promise<void> | void;
 }
 
 const SPINE_SWATCHES = ["#6d4a2a", "#8a2f2a", "#26456b", "#2f5a44", "#4a3a63", "#1f1d1b"];
 
-export function BookMetaDialog({ meta, onClose, onSave }: BookMetaDialogProps) {
+export function BookMetaDialog({ meta, outline, onClose, onSave }: BookMetaDialogProps) {
   const [title, setTitle] = useState(meta.title);
   const [author, setAuthor] = useState(meta.author);
   const [description, setDescription] = useState(meta.description ?? "");
   const [spineColor, setSpineColor] = useState(meta.spineColor ?? "#6d4a2a");
+  const [numbering, setNumbering] = useState<NumberingRule>(() =>
+    normalizeNumbering(meta.numbering ?? defaultNumbering(meta), meta),
+  );
+  const [preview, setPreview] = useState(false);
+  const [applyExisting, setApplyExisting] = useState(false);
   const [busy, setBusy] = useState(false);
+  const previewRows = preview ? previewRenumber(outline, numbering) : [];
 
   const submit = async () => {
     if (busy || !title.trim()) return;
@@ -678,6 +732,8 @@ export function BookMetaDialog({ meta, onClose, onSave }: BookMetaDialogProps) {
         author: author.trim(),
         description: description.trim(),
         spineColor,
+        numbering,
+        renames: applyExisting && preview ? previewRows.map((x) => ({ id: x.id, title: x.to })) : undefined,
       });
       onClose();
     } finally {
@@ -710,7 +766,6 @@ export function BookMetaDialog({ meta, onClose, onSave }: BookMetaDialogProps) {
             value={title}
             maxLength={80}
             onChange={(e) => setTitle(e.target.value)}
-            autoFocus
           />
         </label>
         <label className="field">
@@ -734,6 +789,156 @@ export function BookMetaDialog({ meta, onClose, onSave }: BookMetaDialogProps) {
           />
         </label>
         <div className="settings-note">{t("简介只用于介绍页，不会进入正文。")}</div>
+
+        <div className="field numbering-field" style={{ marginTop: 18 }}>
+          <span>{t("章节编号")}</span>
+          <div className="numbering-grid">
+            <label>
+              <em>{t("单位")}</em>
+              <select
+                className="input"
+                value={numbering.unit}
+                onChange={(e) => {
+                  const unit = e.target.value as NumberingRule["unit"];
+                  const pattern = unit === "hui" ? "第{n}话" : unit === "volume" ? "第{n}卷" : "第{n}章";
+                  setNumbering((n) => ({ ...n, unit, pattern }));
+                  setApplyExisting(false);
+                }}
+              >
+                <option value="chapter">{t("章")}</option>
+                <option value="hui">{t("话（漫画）")}</option>
+                <option value="volume">{t("卷")}</option>
+              </select>
+            </label>
+            <label>
+              <em>{t("数字")}</em>
+              <select
+                className="input"
+                value={numbering.style}
+                onChange={(e) => {
+                  setNumbering((n) => ({ ...n, style: e.target.value as NumberingRule["style"] }));
+                  setApplyExisting(false);
+                }}
+              >
+                <option value="arabic">{t("阿拉伯数字")}</option>
+                <option value="chinese">{t("中文数字")}</option>
+              </select>
+            </label>
+          </div>
+          <label className="numbering-pattern">
+            <em>{t("命名规则")}</em>
+            <input
+              className="input"
+              value={numbering.pattern}
+              maxLength={40}
+              placeholder="第{n}章"
+              onChange={(e) => {
+                setNumbering((n) => ({ ...n, pattern: e.target.value }));
+                setApplyExisting(false);
+              }}
+            />
+            <small>{t("用 {n} 代表序号，例如 第{n}章 / 第{n}话 / {n}.")}</small>
+          </label>
+          <div className="numbering-grid">
+            <label>
+              <em>{t("起始序号")}</em>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                max={9999}
+                value={numbering.startAt}
+                onChange={(e) => {
+                  setNumbering((n) => ({ ...n, startAt: Number(e.target.value) || 1 }));
+                  setApplyExisting(false);
+                }}
+              />
+            </label>
+            <label>
+              <em>{t("现有章节")}</em>
+              <button
+                className="btn btn-outline numbering-preview-btn"
+                onClick={() => {
+                  setPreview((v) => !v);
+                  setApplyExisting(false);
+                }}
+              >
+                {preview ? t("收起预览") : t("预览改名")}
+              </button>
+            </label>
+          </div>
+          <label className="numbering-check">
+            <input
+              type="checkbox"
+              checked={numbering.perVolumeRestart}
+              onChange={(e) => {
+                setNumbering((n) => ({ ...n, perVolumeRestart: e.target.checked }));
+                setApplyExisting(false);
+              }}
+            />
+            <span>{t("每卷从起始序号重新开始")}</span>
+          </label>
+          <label className="numbering-check">
+            <input
+              type="checkbox"
+              checked={!!numbering.specialPrefix}
+              onChange={(e) => {
+                setNumbering((n) => ({ ...n, specialPrefix: e.target.checked ? "【番外】" : undefined }));
+                setApplyExisting(false);
+              }}
+            />
+            <span>{t("加特殊前缀")}</span>
+            {numbering.specialPrefix !== undefined && (
+              <input
+                className="input numbering-prefix"
+                value={numbering.specialPrefix ?? ""}
+                maxLength={12}
+                placeholder="【番外】"
+                onChange={(e) => {
+                  setNumbering((n) => ({ ...n, specialPrefix: e.target.value }));
+                  setApplyExisting(false);
+                }}
+              />
+            )}
+          </label>
+          <div className="numbering-sample">
+            {t("下一章会自动命名为")} <b>{nextChapterTitle(outline, numbering)}</b>
+          </div>
+          {preview && (
+            <div className="numbering-preview">
+              <div className="numbering-preview-head">
+                <span>
+                  {t("将改名的章节")} <b>{previewRows.length}</b>
+                </span>
+                {previewRows.length > 0 && (
+                  <label className="numbering-check inline">
+                    <input
+                      type="checkbox"
+                      checked={applyExisting}
+                      onChange={(e) => setApplyExisting(e.target.checked)}
+                    />
+                    <span>{t("保存时应用")}</span>
+                  </label>
+                )}
+              </div>
+              <div className="numbering-preview-list">
+                {previewRows.length === 0 ? (
+                  <div className="numbering-empty">{t("现有章节名已经符合这条规则。")}</div>
+                ) : (
+                  previewRows.map((row, i) => (
+                    <div className="numbering-preview-row" key={row.id}>
+                      <em>{i + 1}</em>
+                      <span>{row.from}</span>
+                      <b>→ {row.to}</b>
+                    </div>
+                  ))
+                )}
+              </div>
+              <small>{t("只改章名，不动正文；应用后仍可用撤销恢复。")}</small>
+            </div>
+          )}
+        </div>
+
         <div className="field" style={{ marginTop: 12 }}>
           <span>{t("书脊颜色")}</span>
           <div className="spine-swatches">
@@ -816,7 +1021,6 @@ export function LoreEditorDialog({
           <label>{t("名称")}</label>
           <input
             className="input"
-            autoFocus
             value={name}
             placeholder={t("姓名 / 地名 / 物件名")}
             onChange={(e) => setName(e.target.value)}
@@ -902,61 +1106,156 @@ export function LoreEditorDialog({
 export function SceneEditorDialog({
   chapter,
   sceneId,
+  lore,
+  chapters,
   onClose,
   onSave,
 }: {
   chapter: Chapter | null;
   sceneId: string | null;
+  lore?: Lore;
+  chapters?: Chapter[];
   onClose: () => void;
-  onSave: (scene: { id: string; title: string; summary: string }) => void;
+  onSave: (scene: Scene) => void;
 }) {
   const scene = chapter?.scenes.find((s) => s.id === sceneId) ?? null;
   const [title, setTitle] = useState(scene?.title ?? "");
   const [summary, setSummary] = useState(scene?.summary ?? "");
+  const [timeText, setTimeText] = useState(scene?.timeText ?? "");
+  const [place, setPlace] = useState(scene?.place ?? "");
+  const [chapterId, setChapterId] = useState(scene?.chapterId ?? chapter?.id ?? "");
+  const [characters, setCharacters] = useState<string[]>(scene?.characterIds ?? []);
+  const [color, setColor] = useState(scene?.color ?? "#7c9a82");
+
+  const people = (lore?.entries ?? []).filter((e) => e.kind === "character");
+  const places = (lore?.entries ?? []).filter((e) => e.kind === "place");
+  const submit = () =>
+    onSave({
+      ...(scene ?? {}),
+      id: scene?.id ?? `s_${Date.now()}`,
+      title: title.trim() || t("未命名场景"),
+      summary: summary.trim(),
+      timeText: timeText.trim() || undefined,
+      timeOrder: scene?.timeOrder,
+      place: place.trim() || undefined,
+      characterIds: characters.length ? characters : undefined,
+      chapterId: chapterId || undefined,
+      order: scene?.order,
+      color,
+    });
 
   return (
     <Modal
       title={scene ? t("编辑场景") : t("新增场景")}
       subtitle={t("场景是这一章里的一段戏：谁在哪里做了什么，最后局面怎么变了。")}
       onClose={onClose}
+      wide
       actions={
         <>
           <button className="btn btn-ghost" onClick={onClose}>
             {t("取消")}
           </button>
-          <button
-            className="btn btn-primary"
-            onClick={() =>
-              onSave({
-                id: scene?.id ?? `s_${Date.now()}`,
-                title: title.trim() || t("未命名场景"),
-                summary: summary.trim(),
-              })
-            }
-          >
+          <button className="btn btn-primary" onClick={submit}>
             {t("保存场景")}
           </button>
         </>
       }
     >
-      <div className="field">
-        <label>{t("场景名")}</label>
-        <input
-          className="input"
-          autoFocus
-          value={title}
-          placeholder={t("例如：雨夜追车")}
-          onChange={(e) => setTitle(e.target.value)}
-        />
-      </div>
-      <div className="field">
-        <label>{t("这一段发生什么")}</label>
-        <textarea
-          className="input"
-          value={summary}
-          placeholder={t("一两句话就够，写正文时不必照着它写。")}
-          onChange={(e) => setSummary(e.target.value)}
-        />
+      <div className="scene-form">
+        <label className="field">
+          <span>{t("场景名")}</span>
+          <input
+            className="input"
+            value={title}
+            placeholder={t("例如：雨夜追车")}
+            onChange={(e) => setTitle(e.target.value)}
+          />
+        </label>
+        <div className="scene-grid">
+          <label className="field">
+            <span>{t("故事内时间")}</span>
+            <input
+              className="input"
+              value={timeText}
+              placeholder={t("例如：第三夜 · 凌晨")}
+              onChange={(e) => setTimeText(e.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span>{t("地点")}</span>
+            <input
+              className="input"
+              list="scene-place-list"
+              value={place}
+              placeholder={t("例如：旧城钟楼")}
+              onChange={(e) => setPlace(e.target.value)}
+            />
+            <datalist id="scene-place-list">
+              {places.map((p) => (
+                <option value={p.name} key={p.id} />
+              ))}
+            </datalist>
+          </label>
+        </div>
+        {chapters && chapters.length > 1 && (
+          <label className="field">
+            <span>{t("归属章节")}</span>
+            <select className="input" value={chapterId} onChange={(e) => setChapterId(e.target.value)}>
+              {chapters.map((c) => (
+                <option value={c.id} key={c.id}>
+                  {c.title}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <div className="field">
+          <span>{t("出场人物")}</span>
+          {people.length === 0 ? (
+            <div className="scene-hint">{t("还没有人物设定，可先在「设定」里建角色。")}</div>
+          ) : (
+            <div className="scene-chips">
+              {people.map((p) => {
+                const on = characters.includes(p.id);
+                return (
+                  <button
+                    type="button"
+                    key={p.id}
+                    className={`scene-chip${on ? " on" : ""}`}
+                    onClick={() =>
+                      setCharacters((prev) => (on ? prev.filter((x) => x !== p.id) : [...prev, p.id]))
+                    }
+                  >
+                    {p.name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <div className="field">
+          <span>{t("这一段发生什么")}</span>
+          <textarea
+            className="input scene-summary"
+            value={summary}
+            placeholder={t("一两句话就够，写正文时不必照着它写。")}
+            onChange={(e) => setSummary(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <span>{t("卡片颜色")}</span>
+          <div className="scene-colors">
+            {["#7c9a82", "#b8865b", "#6b86a8", "#9a6b92", "#b0a15e", "#6f6a63"].map((c) => (
+              <button
+                type="button"
+                key={c}
+                className={`scene-color${color === c ? " on" : ""}`}
+                style={{ background: c }}
+                onClick={() => setColor(c)}
+              />
+            ))}
+          </div>
+        </div>
       </div>
     </Modal>
   );

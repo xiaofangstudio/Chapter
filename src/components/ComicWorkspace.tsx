@@ -7,7 +7,10 @@ import {
 } from "react";
 import type * as React from "react";
 import { createPortal } from "react-dom";
-import type { BookMeta } from "../types";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { shareFile } from "@choochmeque/tauri-plugin-sharekit-api";
+import type { BookMeta, ProofreadConfig, ProofreadIssue } from "../types";
 import { api } from "../lib/api";
 import {
   DEFAULT_BRUSH,
@@ -16,6 +19,8 @@ import {
   type BrushSettings,
 } from "../lib/paint/paint";
 import { BrushStudio } from "./BrushStudio";
+import { ProofreadDialog } from "./ProofreadDialog";
+import { addIgnore, scanProofread } from "../lib/proofread";
 import { penPressureOf, penSampleOf } from "../lib/paint/pen";
 import { cloneSurface, createSurface, mustCtx, readPixels } from "../lib/paint/surface";
 import {
@@ -103,6 +108,8 @@ type SaveState = "saved" | "saving" | "dirty" | "error";
 type Point = { x: number; y: number };
 type Rect = { x: number; y: number; w: number; h: number };
 
+const IS_ANDROID_APP =
+  typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
 const BLEND_MODE_ITEMS: { id: ComicBlendMode; label: string }[] = [
   { id: "normal", label: "正常" },
   { id: "multiply", label: "正片叠底" },
@@ -1532,6 +1539,9 @@ export function ComicWorkspace({
   chapterId,
   firstChapterId,
   embedded = false,
+  proofread,
+  onProofread,
+  openExportSignal = 0,
 }: {
   path: string;
   meta: BookMeta;
@@ -1542,6 +1552,10 @@ export function ComicWorkspace({
   firstChapterId?: string;
   /** 嵌进小说同款工作台时隐藏漫画自带顶栏。 */
   embedded?: boolean;
+  proofread: ProofreadConfig;
+  onProofread: (config: ProofreadConfig) => void;
+  /** 从书籍菜单触发导出时递增，漫画画布接住后直接打开图片导出面板。 */
+  openExportSignal?: number;
 }) {
   const [project, setProject] = useState<ComicProjectMeta | null>(null);
   const [page, setPage] = useState<ComicPage | null>(null);
@@ -1581,6 +1595,7 @@ export function ComicWorkspace({
     h: number;
     text: string;
   } | null>(null);
+  const [textProofOpen, setTextProofOpen] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [pageZoom, setPageZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -1599,6 +1614,10 @@ export function ComicWorkspace({
   const [selectionShape, setSelectionShape] = useState<SelectionShape>("rect");
   const [selectionMenuOpen, setSelectionMenuOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [comicExportOpen, setComicExportOpen] = useState(false);
+  const [comicExportBusy, setComicExportBusy] = useState(false);
+  const [comicExportNote, setComicExportNote] = useState("");
+  const [comicExportDone, setComicExportDone] = useState<string | null>(null);
   const [shapeKind, setShapeKindState] = useState<ShapeKind>("rect");
   const [shapeConstrain, setShapeConstrain] = useState(false);
   const [liquifyRadius, setLiquifyRadius] = useState(58);
@@ -1642,6 +1661,15 @@ export function ComicWorkspace({
   const pagePressFiredRef = useRef(false);
   const palettePressRef = useRef<{ id: string; timer: number } | null>(null);
   const palettePressFiredRef = useRef(false);
+
+  useEffect(() => {
+    if (!openExportSignal) return;
+    setComicExportDone(null);
+    setComicExportNote("");
+    setComicExportOpen(true);
+    setAdvancedOpen(false);
+    setMobileZoomOpen(false);
+  }, [openExportSignal]);
 
   useEffect(() => {
     const query = window.matchMedia("(max-width: 820px)");
@@ -2134,6 +2162,189 @@ export function ComicWorkspace({
     }
   }, [makeThumb]);
 
+  const renderFlatPage = useCallback(
+    (p: ComicPage, layers: Map<string, HTMLCanvasElement>, assets: Map<string, HTMLImageElement>) => {
+      const canvas = createSurface(Math.round(p.width), Math.round(p.height), "#ffffff");
+      drawPage(mustCtx(canvas), p, layers, assets, { scale: 1 });
+      const url = canvas.toDataURL("image/png");
+      canvas.width = 0;
+      canvas.height = 0;
+      return url;
+    },
+    [],
+  );
+
+  const renderPageFromDisk = useCallback(async (id: string) => {
+    const payload = await api.comicReadPage(pathRef.current, id);
+    const parsed = ensurePageFrame(JSON.parse(payload.json) as ComicPage);
+    const layers = new Map<string, HTMLCanvasElement>();
+    const assets = new Map<string, HTMLImageElement>();
+    await Promise.all(
+      payload.layers.map(async (layer) => {
+        const frame = parsed.frames.find((f) => f.layers.some((l) => l.id === layer.id));
+        const joint = parsed.jointLayers?.find((item) => item.id === layer.id);
+        const target = frame ?? (joint ? jointFrameOf(joint) : null);
+        if (!target) return;
+        try {
+          const image = await loadImage(layer.dataUrl);
+          const canvas = createSurface(Math.round(target.w), Math.round(target.h));
+          mustCtx(canvas).drawImage(image, 0, 0, target.w, target.h);
+          layers.set(keyOf(target.id, layer.id), canvas);
+        } catch {
+          // 单张图层坏了就当作空图层，别阻塞整本导出。
+        }
+      }),
+    );
+    await Promise.all(
+      payload.assets.map(async (asset) => {
+        try {
+          assets.set(asset.path, await loadImage(asset.dataUrl));
+        } catch {
+          // 素材坏了，仍导出其余页面。
+        }
+      }),
+    );
+    try {
+      return renderFlatPage(parsed, layers, assets);
+    } finally {
+      for (const layer of layers.values()) {
+        layer.width = 0;
+        layer.height = 0;
+      }
+    }
+  }, [renderFlatPage]);
+
+  const runComicExport = useCallback(
+    async (kind: "current" | "chapter" | "book") => {
+      const proj = projectRef.current;
+      const current = pageRef.current;
+      if (!proj || !current || comicExportBusy) return;
+      const clean = (text: string) =>
+        text.replace(/[\\/:*?"<>|]/g, "_").replace(/\s+/g, " ").trim() || "未命名";
+      const all = proj.pages;
+      const scope = kind === "current" ? [] : kind === "chapter" ? visiblePages : all;
+      const currentIndex = Math.max(0, all.findIndex((p) => p.id === current.id));
+      const count = kind === "current" ? 1 : scope.length;
+      const ext = kind === "current" ? "png" : "zip";
+      const base = clean(meta.title || "漫画");
+      const defaultName =
+        kind === "current"
+          ? `${base}_第${currentIndex + 1}页.png`
+          : kind === "chapter"
+            ? `${base}_当前话_${count}页.zip`
+            : `${base}_整本漫画_${count}页.zip`;
+      setComicExportBusy(true);
+      setComicExportDone(null);
+      setComicExportNote("先选保存位置…");
+      let dest: string | null = null;
+      let canFallback = false;
+      try {
+        if (IS_ANDROID_APP) {
+          // Android 的系统“另存为”会白屏或给 content://，改走 App 导出目录 + 系统分享。
+          canFallback = true;
+          dest = "";
+          setComicExportNote("正在生成图片…");
+        } else {
+          const picked = await saveDialog({
+            title: "导出漫画图片",
+            defaultPath: defaultName,
+            filters:
+              kind === "current"
+                ? [{ name: "PNG 图片", extensions: ["png"] }]
+                : [{ name: "ZIP 图片包", extensions: ["zip"] }],
+          });
+          dest = typeof picked === "string" ? picked : null;
+          if (!dest) {
+            setComicExportNote("已取消导出");
+            return;
+          }
+          if (!dest.toLowerCase().endsWith(`.${ext}`)) dest = `${dest}.${ext}`;
+        }
+      } catch {
+        // 桌面另存为出错时也退回 App 目录，至少文件不会丢。
+        canFallback = true;
+        dest = "";
+      }
+      let singleData: string | undefined;
+      let tempDir: string | undefined;
+      try {
+        if (kind === "current") {
+          setComicExportNote("正在合成当前页…");
+          singleData = renderFlatPage(current, layerMap.current, assetMap.current);
+          if (dest) {
+            try {
+              await api.comicExportSingle(dest, defaultName, singleData);
+            } catch (e) {
+              if (!canFallback && !isMobile) throw e;
+              canFallback = true;
+            }
+          }
+          if (canFallback) {
+            const saved = await api.comicExportToApp(defaultName, singleData);
+            dest = saved;
+          }
+        } else {
+          setComicExportNote("正在保存当前修改…");
+          await savePage();
+          tempDir = await api.comicExportBegin();
+          for (let index = 0; index < scope.length; index += 1) {
+            const item = scope[index];
+            setComicExportNote(`正在导出第 ${index + 1}/${scope.length} 页…`);
+            const data =
+              item.id === current.id
+                ? renderFlatPage(current, layerMap.current, assetMap.current)
+                : await renderPageFromDisk(item.id);
+            const file = `${String(index + 1).padStart(Math.max(2, String(scope.length).length), "0")}_${clean(item.title || `第${index + 1}页`)}.png`;
+            await api.comicExportAddPage(tempDir, file, data);
+          }
+          setComicExportNote(`正在打包 ${scope.length} 页…`);
+          if (dest) {
+            try {
+              await api.comicExportFinish(tempDir, dest);
+              tempDir = undefined;
+            } catch (e) {
+              if (!canFallback && !isMobile) throw e;
+              canFallback = true;
+            }
+          }
+          if (canFallback) {
+            const saved = await api.comicExportToApp(defaultName, undefined, tempDir);
+            tempDir = undefined;
+            dest = saved;
+          }
+        }
+        setComicExportDone(dest);
+        let shared = false;
+        if (IS_ANDROID_APP && dest) {
+          try {
+            await shareFile(`file://${dest}`, {
+              mimeType: ext === "png" ? "image/png" : "application/zip",
+              title: defaultName,
+            });
+            shared = true;
+          } catch {
+            // 分享面板打不开时，文件仍在 App 导出目录，可在下面点“打开文件”。
+          }
+        }
+        setComicExportNote(
+          shared
+            ? `已生成 ${kind === "current" ? "PNG" : "ZIP"}，在系统面板里选保存到相册 / 文件或发送`
+            : kind === "current"
+              ? `已导出 1 张 PNG，原尺寸 ${Math.round(current.width)}×${Math.round(current.height)}`
+              : `已导出 ${scope.length} 页 PNG，按页序打成一个 ZIP`,
+        );
+        setStatus("漫画图片已导出");
+      } catch (e) {
+        setComicExportNote(`导出失败：${String(e)}`);
+        setStatus(`导出失败：${String(e)}`);
+      } finally {
+        if (tempDir) await api.comicExportDiscard(tempDir).catch(() => undefined);
+        setComicExportBusy(false);
+      }
+    },
+    [comicExportBusy, isMobile, meta.title, renderFlatPage, renderPageFromDisk, savePage, visiblePages],
+  );
+
   const scheduleSave = useCallback(() => {
     setSaveState("dirty");
     if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
@@ -2349,7 +2560,7 @@ export function ComicWorkspace({
       if (!stage || !p) return;
       const compact = window.matchMedia("(max-width: 820px)").matches;
       const w = Math.max(120, stage.clientWidth - (compact ? 20 : 110));
-      const h = Math.max(120, stage.clientHeight - (compact ? 150 : 158));
+      const h = Math.max(120, stage.clientHeight - (compact ? 240 : 158));
       setFitScale(Math.min(w / p.width, h / p.height, 1.35));
       const frame = focusFrameRef.current;
       if (frame) {
@@ -2556,7 +2767,7 @@ export function ComicWorkspace({
       const frame = focusFrameRef.current;
       const meta = frame?.layers.find((l) => l.id === activeLayerRef.current) ?? frame?.layers[0];
       if (!p || !frame || !meta) {
-        setStatus("先双击一个格进入聚焦，再复制选区");
+        setStatus(isMobile ? "先点两下格子进入聚焦，再复制选区" : "先双击一个格进入聚焦，再复制选区");
         return;
       }
       if (cut && meta.locked) {
@@ -2718,7 +2929,7 @@ export function ComicWorkspace({
       const frame = focusFrameRef.current;
       const meta = frame?.layers.find((l) => l.id === activeLayerRef.current) ?? frame?.layers[0];
       if (!frame || !meta) {
-        setStatus("先双击一个格进入聚焦，再用滤镜");
+        setStatus(isMobile ? "先点两下格子进入聚焦，再用滤镜" : "先双击一个格进入聚焦，再用滤镜");
         return;
       }
       if (meta.locked) {
@@ -2806,10 +3017,16 @@ export function ComicWorkspace({
     setSelectionMenuOpen(false);
     setStatus(
       kind === "rect"
-        ? "图形：拖一个矩形，按住 Shift 画正方形"
+        ? isMobile
+          ? "图形：拖一个矩形，点「等比」锁正方形"
+          : "图形：拖一个矩形，按住 Shift 画正方形"
         : kind === "ellipse"
-          ? "图形：拖一个椭圆，按住 Shift 画正圆"
-          : "图形：拖一条直线，按住 Shift 锁定 45°",
+          ? isMobile
+            ? "图形：拖一个椭圆，点「等比」锁正圆"
+            : "图形：拖一个椭圆，按住 Shift 画正圆"
+          : isMobile
+            ? "图形：拖一条直线，点「等比」锁 45°"
+            : "图形：拖一条直线，按住 Shift 锁定 45°",
     );
   };
 
@@ -2820,7 +3037,7 @@ export function ComicWorkspace({
     setStatus(
       focusRef.current
         ? "移动：拖动画面挪当前图层；有选区时只挪选区内容"
-        : "先双击一个格进入聚焦，再移动图层",
+        : (isMobile ? "先点两下格子进入聚焦，再移动图层" : "先双击一个格进入聚焦，再移动图层"),
     );
   };
 
@@ -2830,7 +3047,7 @@ export function ComicWorkspace({
     setStatus(
       focusRef.current
         ? "液化：按住并推动像素；半径和力度可在进阶工具里调"
-        : "先双击一个格进入聚焦，再液化",
+        : (isMobile ? "先点两下格子进入聚焦，再液化" : "先双击一个格进入聚焦，再液化"),
     );
   };
 
@@ -3019,7 +3236,7 @@ export function ComicWorkspace({
       return;
     }
     if (toolRef.current === "selection") {
-      setStatus("选区只能在格内聚焦里用：先双击一个格进去");
+      setStatus(isMobile ? "选区只能在格内聚焦里用：先点两下格子进去" : "选区只能在格内聚焦里用：先双击一个格进去");
       return;
     }
     const pf = pageFrameOf(p);
@@ -3715,7 +3932,7 @@ export function ComicWorkspace({
       };
       focusBaseRef.current = buildFocusBase(p, frame, layerMap.current, assetMap.current, joint);
       e.currentTarget.setPointerCapture(e.pointerId);
-      setStatus("拖到合适大小松手；按住 Shift 可约束比例");
+      setStatus(isMobile ? "拖到合适大小松手；点「等比」锁比例" : "拖到合适大小松手；按住 Shift 可约束比例");
       scheduleRender();
       return;
     }
@@ -4151,6 +4368,18 @@ export function ComicWorkspace({
       commitPage(next);
       scheduleRender();
     }
+  };
+
+  const textIssues = useMemo<ProofreadIssue[]>(() => {
+    if (!textEdit || !proofread.enabled) return [];
+    return scanProofread(textEdit.text, proofread, { minTermLength: 2 });
+  }, [textEdit?.text, proofread]);
+
+  const replaceTextIssue = (issue: ProofreadIssue, value: string) => {
+    const current = textEditRef.current;
+    if (!current) return;
+    onTextChange(current.text.slice(0, issue.start) + value + current.text.slice(issue.end));
+    setTextProofOpen(false);
   };
 
   /* ───────── 页 / 格结构 ───────── */
@@ -4819,7 +5048,7 @@ export function ComicWorkspace({
                 </button>
                 {draftRect && <span className="comic-stage-flag">拖格中</span>}
                 {guides && <span className="comic-stage-flag">已吸附</span>}
-                单击选中 · 双击入格 · 多选后一起画
+                {isMobile ? "点一下选中 · 点两下入格 · 多选后一起画" : "单击选中 · 双击入格 · 多选后一起画"}
               </div>
               {selectedFrames.length >= 2 && (
                 <button
@@ -5417,26 +5646,39 @@ export function ComicWorkspace({
                   </div>
                 )}
                 {textEdit && page && (
-                  <textarea
-                    className="comic-text-edit"
-                    autoFocus
-                    value={textEdit.text}
-                    placeholder="双击输入台词"
+                  <div
+                    className="comic-text-edit-box"
                     style={{
                       left: `${(textEdit.x / page.width) * 100}%`,
                       top: `${(textEdit.y / page.height) * 100}%`,
                       width: `${(textEdit.w / page.width) * 100}%`,
                       height: `${(textEdit.h / page.height) * 100}%`,
                     }}
-                    onChange={(e) => onTextChange(e.target.value)}
-                    onBlur={commitTextEdit}
-                    onKeyDown={(e) => {
-                      if (e.key === "Escape") {
-                        e.preventDefault();
-                        setTextEdit(null);
-                      }
-                    }}
-                  />
+                  >
+                    <textarea
+                      className="comic-text-edit"
+                      autoFocus
+                      value={textEdit.text}
+                      placeholder="双击输入台词"
+                      onChange={(e) => onTextChange(e.target.value)}
+                      onBlur={commitTextEdit}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") {
+                          e.preventDefault();
+                          setTextEdit(null);
+                        }
+                      }}
+                    />
+                    {textIssues.length > 0 && (
+                      <button
+                        className="comic-proof-chip"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => setTextProofOpen(true)}
+                      >
+                        校对 {textIssues.length}
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             ) : (
@@ -5509,7 +5751,7 @@ export function ComicWorkspace({
                               : item.key === "lasso"
                                 ? "柳叶套索：按住拖一圈"
                                 : "矩形框选：拖一个框"
-                            : "先双击一个格进入聚焦，再框选",
+                            : (isMobile ? "先点两下格子进入聚焦，再框选" : "先双击一个格进入聚焦，再框选"),
                         );
                       }}
                     >
@@ -5634,7 +5876,7 @@ export function ComicWorkspace({
               active={tool === "fill"}
               onClick={() => {
                 setTool("fill");
-                setStatus(focusRef.current ? "填充：点线稿闭合区" : "先双击一个格进入聚焦，再填充");
+                setStatus(focusRef.current ? "填充：点线稿闭合区" : isMobile ? "先点两下格子进入聚焦，再填充" : "先双击一个格进入聚焦，再填充");
               }}
               label="填充"
               icon={
@@ -5648,7 +5890,7 @@ export function ComicWorkspace({
               active={tool === "eyedropper"}
               onClick={() => {
                 setTool("eyedropper");
-                setStatus(focusRef.current ? "吸色：点画稿任意位置" : "先双击一个格进入聚焦，再吸色");
+                setStatus(focusRef.current ? "吸色：点画稿任意位置" : isMobile ? "先点两下格子进入聚焦，再吸色" : "先双击一个格进入聚焦，再吸色");
               }}
               label="吸色"
               icon={
@@ -5729,6 +5971,22 @@ export function ComicWorkspace({
                 </svg>
               }
             />
+            <ToolBtn
+              active={false}
+              onClick={() => {
+                setComicExportDone(null);
+                setComicExportNote("");
+                setComicExportOpen(true);
+              }}
+              label="导出"
+              icon={
+                <svg viewBox="0 0 24 24">
+                  <path d="M12 4v10" />
+                  <path d="M8 10l4 4 4-4" />
+                  <path d="M5 18h14" />
+                </svg>
+              }
+            />
             <label
               className="comic-color comic-color-picker"
               title="当前画笔颜色，点开自选"
@@ -5752,12 +6010,6 @@ export function ComicWorkspace({
                 </div>
               )}
               <div className="comic-dock-actions">
-                <DockBtn label="撤销" onClick={undo}>
-                  <svg viewBox="0 0 24 24"><path d="M9 7H4v5" /><path d="M4 12a7 7 0 1 0 7-7" /></svg>
-                </DockBtn>
-                <DockBtn label="重做" onClick={redo}>
-                  <svg viewBox="0 0 24 24"><path d="M15 7h5v5" /><path d="M20 12a7 7 0 1 1-7-7" /></svg>
-                </DockBtn>
                 <DockBtn label="笔刷" onClick={openBrushPanel} active={mobileInspector && brushSectionOpen}>
                   <svg viewBox="0 0 24 24"><path d="M4 7h9M4 12h16M4 17h7" /><circle cx="17" cy="7" r="2" /><circle cx="14" cy="17" r="2" /></svg>
                 </DockBtn>
@@ -5795,6 +6047,20 @@ export function ComicWorkspace({
                   active={mobileZoomOpen}
                 >
                   <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6" /><path d="M15 15l5 5" /><path d="M8 10.5h5" /></svg>
+                </DockBtn>
+                <DockBtn
+                  label="导出"
+                  onClick={() => {
+                    setComicExportDone(null);
+                    setComicExportNote("");
+                    setComicExportOpen(true);
+                    setAdvancedOpen(false);
+                    setMobileZoomOpen(false);
+                    setMobileInspector(false);
+                    setMobilePages(false);
+                  }}
+                >
+                  <svg viewBox="0 0 24 24"><path d="M12 4v10" /><path d="M8 10l4 4 4-4" /><path d="M5 18h14" /></svg>
                 </DockBtn>
                 <DockBtn
                   label="更多"
@@ -5844,7 +6110,7 @@ export function ComicWorkspace({
                   active={tool === "fill"}
                   onClick={() => {
                     setTool("fill");
-                    setStatus(focusRef.current ? "填充：点线稿闭合区" : "先双击一个格进入聚焦，再填充");
+                    setStatus(focusRef.current ? "填充：点线稿闭合区" : isMobile ? "先点两下格子进入聚焦，再填充" : "先双击一个格进入聚焦，再填充");
                   }}
                   label="填充"
                   icon={
@@ -5858,7 +6124,7 @@ export function ComicWorkspace({
                   active={tool === "eyedropper"}
                   onClick={() => {
                     setTool("eyedropper");
-                    setStatus(focusRef.current ? "吸色：点画稿任意位置" : "先双击一个格进入聚焦，再吸色");
+                    setStatus(focusRef.current ? "吸色：点画稿任意位置" : isMobile ? "先点两下格子进入聚焦，再吸色" : "先双击一个格进入聚焦，再吸色");
                   }}
                   label="吸色"
                   icon={
@@ -6865,6 +7131,141 @@ export function ComicWorkspace({
           </div>
         </div>
       )}
+      {comicExportOpen &&
+        createPortal(
+          <div
+            className="comic-export-layer"
+            onClick={() => {
+              if (!comicExportBusy) setComicExportOpen(false);
+            }}
+          >
+            <div
+              className={`comic-export-panel${isMobile ? " mobile" : ""}`}
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-label="导出漫画"
+            >
+              <div className="comic-export-head">
+                <div>
+                  <strong>导出漫画</strong>
+                  <span>导出的是合好的整页图，不是文字稿</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setComicExportOpen(false)}
+                  disabled={comicExportBusy}
+                  aria-label="关闭导出"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="comic-export-options">
+                <button
+                  type="button"
+                  className="comic-export-option"
+                  disabled={comicExportBusy || !page}
+                  onClick={() => void runComicExport("current")}
+                >
+                  <span className="comic-export-icon">
+                    <svg viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" /><path d="M8 8h8M8 12h8M8 16h5" /></svg>
+                  </span>
+                  <span className="comic-export-copy">
+                    <strong>当前页 PNG</strong>
+                    <em>只导这一页，原尺寸 {Math.round(page?.width ?? 1654)}×{Math.round(page?.height ?? 2339)}</em>
+                  </span>
+                  <span className="comic-export-tag">1 张</span>
+                </button>
+                <button
+                  type="button"
+                  className="comic-export-option"
+                  disabled={comicExportBusy || visiblePages.length === 0}
+                  onClick={() => void runComicExport("chapter")}
+                >
+                  <span className="comic-export-icon">
+                    <svg viewBox="0 0 24 24"><rect x="4" y="3" width="11" height="18" /><path d="M9 6h11v15H9z" /><path d="M12 11h5M12 15h5" /></svg>
+                  </span>
+                  <span className="comic-export-copy">
+                    <strong>当前话逐页 PNG</strong>
+                    <em>这一话 {visiblePages.length} 页各一张 PNG，打成一个 ZIP</em>
+                  </span>
+                  <span className="comic-export-tag">{visiblePages.length} 页</span>
+                </button>
+                <button
+                  type="button"
+                  className="comic-export-option"
+                  disabled={comicExportBusy || !project || project.pages.length === 0}
+                  onClick={() => void runComicExport("book")}
+                >
+                  <span className="comic-export-icon">
+                    <svg viewBox="0 0 24 24"><path d="M4 5h7v16H4z" /><path d="M13 5h7v16h-7z" /><path d="M7 8h1M7 12h1M16 8h1M16 12h1" /></svg>
+                  </span>
+                  <span className="comic-export-copy">
+                    <strong>整本逐页 PNG</strong>
+                    <em>全书 {project?.pages.length ?? 0} 页按页序编号，一个 ZIP 带走</em>
+                  </span>
+                  <span className="comic-export-tag">{project?.pages.length ?? 0} 页</span>
+                </button>
+              </div>
+              {comicExportBusy && (
+                <div className="comic-export-progress">
+                  <i />
+                  <span>{comicExportNote || "正在导出…"}</span>
+                </div>
+              )}
+              {!comicExportBusy && comicExportNote && (
+                <p className={`comic-export-note${comicExportDone ? " ok" : ""}`}>{comicExportNote}</p>
+              )}
+              {comicExportDone && (
+                <div className="comic-export-result">
+                  <code>{comicExportDone}</code>
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isMobile) void openPath(comicExportDone);
+                        else void revealItemInDir(comicExportDone);
+                      }}
+                    >
+                      {isMobile ? "打开文件" : "打开所在文件夹"}
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost"
+                      onClick={() => {
+                        setComicExportDone(null);
+                        setComicExportNote("");
+                      }}
+                    >
+                      再导一次
+                    </button>
+                  </div>
+                </div>
+              )}
+              <p className="comic-export-foot">
+                PNG 保留 200dpi 原页尺寸；ZIP 内文件按 01_页名.png 排序，方便直接上传平台或印刷。
+              </p>
+            </div>
+          </div>,
+          document.body,
+        )}
+      {textProofOpen && textEdit && (
+        <ProofreadDialog
+          config={proofread}
+          issues={textIssues}
+          onClose={() => setTextProofOpen(false)}
+          onSave={(next) => {
+            onProofread(next);
+            setTextProofOpen(false);
+          }}
+          onReplace={replaceTextIssue}
+          onIgnore={(issue) => {
+            onProofread(addIgnore(proofread, issue, textEdit.text));
+            setTextProofOpen(false);
+          }}
+          onRescan={() => setTextProofOpen(true)}
+        />
+      )}
     </div>
   );
 }
@@ -7044,3 +7445,5 @@ function LayerDot({
   }, [frame.id, layer.id, layerMap]);
   return <canvas ref={ref} className="comic-layer-dot" />;
 }
+
+

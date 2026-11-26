@@ -10,7 +10,7 @@
 
 use super::{
     chapters_dir, ensure_dir, ensure_project, load_library, now_ms, sanitize_name, BOOK_FILE,
-    LORE_FILE, OUTLINE_FILE,
+    LORE_FILE, OUTLINE_FILE, PROOFREAD_FILE,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -347,6 +347,8 @@ fn kind_of(path: &str) -> &'static str {
         "outline"
     } else if path == LORE_FILE {
         "lore"
+    } else if path == PROOFREAD_FILE {
+        "proofread"
     } else if path.starts_with("chapters/") {
         "chapter"
     } else if path.starts_with("notes/") {
@@ -412,7 +414,7 @@ fn collect_sync_paths(book: &Path) -> Result<Vec<String>, String> {
     if !book.is_dir() {
         return Ok(Vec::new());
     }
-    for name in [BOOK_FILE, OUTLINE_FILE, LORE_FILE] {
+    for name in [BOOK_FILE, OUTLINE_FILE, LORE_FILE, PROOFREAD_FILE] {
         if book.join(name).is_file() {
             paths.insert(name.to_string());
         }
@@ -746,6 +748,7 @@ fn validate_rel_path(path: &str) -> Result<(), String> {
     let allowed = path == BOOK_FILE
         || path == OUTLINE_FILE
         || path == LORE_FILE
+        || path == PROOFREAD_FILE
         || path.starts_with("chapters/")
         || path.starts_with("notes/")
         || path.starts_with("assets/")

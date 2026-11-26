@@ -206,6 +206,7 @@ export function WorkspaceHome({
   const PAGE_SIZE = 24;
   const [notes, setNotes] = useState<Note[]>(readNotes);
   const [selectedNote, setSelectedNote] = useState<string | null>(null);
+  const [noteDeskOpen, setNoteDeskOpen] = useState(false);
   const [noteSearch, setNoteSearch] = useState("");
   const [notePreview, setNotePreview] = useState(
     () => typeof window === "undefined" || window.innerWidth > 820,
@@ -214,6 +215,19 @@ export function WorkspaceHome({
   const bookCoverRef = useRef<HTMLDivElement | null>(null);
   const mainRef = useRef<HTMLDivElement | null>(null);
   const noteBodyRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    window.__chapterBackExtra = () => {
+      if (noteDeskOpen) {
+        setNoteDeskOpen(false);
+        return true;
+      }
+      return false;
+    };
+    return () => {
+      delete window.__chapterBackExtra;
+    };
+  }, [noteDeskOpen]);
 
   useEffect(() => {
     setWelcome(pickWelcome());
@@ -267,6 +281,7 @@ export function WorkspaceHome({
     setNotes((prev) => [note, ...prev]);
     setSelectedNote(id);
     setNoteSearch("");
+    setNoteDeskOpen(true);
   };
 
   const patchNote = (id: string, patch: Partial<Note>) => {
@@ -277,6 +292,7 @@ export function WorkspaceHome({
     const rest = notes.filter((n) => n.id !== id);
     setNotes(rest);
     if (selectedNote === id) setSelectedNote(rest[0]?.id ?? null);
+    setNoteDeskOpen(false);
   };
 
   const days = useMemo(companionDays, []);
@@ -554,6 +570,7 @@ export function WorkspaceHome({
       document.documentElement.dataset.motion === "off" ||
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     window.clearTimeout(leaveTimer.current);
+    if (next === "notes") setNoteDeskOpen(false);
     if (calm) {
       setLeaving(null);
       setPane(next);
@@ -1039,7 +1056,7 @@ which === "home" ? (
             </section>
           </main>
         ) : (
-          <main className="wb-pane wb-notes">
+          <main className={`wb-pane wb-notes${notes.length > 0 ? " has-notes" : ""}${noteDeskOpen ? " note-desk-open" : ""}`}>
             <div className="wb-pane-head">
               <div>
                 <h1>{t("灵感便签")}</h1>
@@ -1080,7 +1097,10 @@ which === "home" ? (
                         role="option"
                         aria-selected={note.id === selectedNote}
                         className={`wb-note-item${note.id === selectedNote ? " on" : ""}`}
-                        onClick={() => setSelectedNote(note.id)}
+                        onClick={() => {
+                          setSelectedNote(note.id);
+                          setNoteDeskOpen(true);
+                        }}
                       >
                         <div className="wb-note-item-title">
                           {note.pinned && <Icon name="pin" size={11} />}
@@ -1108,6 +1128,13 @@ which === "home" ? (
                 {activeNote ? (
                   <>
                     <div className="wb-note-desk-head">
+                      <button
+                        className="wb-note-back"
+                        onClick={() => setNoteDeskOpen(false)}
+                        aria-label={t("返回便签列表")}
+                      >
+                        <Icon name="arrow" size={15} />
+                      </button>
                       <input
                         className="wb-note-title"
                         value={activeNote.title}
@@ -1404,7 +1431,7 @@ which === "home" ? (
                 </div>
               </aside>
 
-              <section className="wb-series-main">
+              <section className={`wb-series-main${!selectedSeries ? " empty" : ""}`}>
                 {!selectedSeries ? (
                   <div className="wb-series-empty big">
                     <span className="wb-series-empty-mark big">组</span>

@@ -21,6 +21,7 @@ interface Props {
     style: string;
     spineColor: string;
   }) => Promise<void> | void;
+  onOpenDesigner?: () => void;
   /** 打开系统选图，并进入 3:4 裁切。 */
   onPickFile: () => void;
 }
@@ -34,6 +35,7 @@ export function CoverPickerDialog({
   customCoverUrl,
   onClose,
   onApply,
+  onOpenDesigner,
   onPickFile,
 }: Props) {
   const fallbackStyle = resolveCoverTemplate(coverStyle, title);
@@ -98,6 +100,12 @@ export function CoverPickerDialog({
             <span><i>02</i>{t("切书页 · 立体书")}</span>
             <span><i>03</i>{t("介绍页 · 左上封面")}</span>
           </div>
+          {onOpenDesigner && (
+            <button className="btn btn-outline cover-designer-entry" onClick={onOpenDesigner}>
+              <Icon name="edit" size={13} />
+              {t("自己排一张")}
+            </button>
+          )}
         </aside>
 
         <div className="cover-picker-main">

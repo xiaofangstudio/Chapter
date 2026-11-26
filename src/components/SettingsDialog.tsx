@@ -637,7 +637,11 @@ function AboutPanel({ language }: { language: UiLanguage }) {
 }
 
 export function SettingsDialog(props: SettingsDialogProps) {
-  const [section, setSection] = useState<Section>(props.initialSection ?? "appearance");
+  const isPhone = typeof window !== "undefined" && window.matchMedia("(max-width: 820px)").matches;
+  const sections = isPhone ? SECTIONS.filter((s) => s.key !== "git") : SECTIONS;
+  const [section, setSection] = useState<Section>(
+    isPhone && props.initialSection === "git" ? "appearance" : (props.initialSection ?? "appearance"),
+  );
   const [version, setVersion] = useState("1.3.4");
   useEffect(() => {
     getVersion().then(setVersion).catch(() => {});
@@ -710,7 +714,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
 
         <div className="settings-main">
           <nav className="settings-rail" aria-label={t("设置栏目")}>
-            {SECTIONS.map((s) => (
+            {sections.map((s) => (
               <button
                 key={s.key}
                 className={`set-nav-item${section === s.key ? " on" : ""}`}

@@ -85,33 +85,48 @@ export function ContextMenu({
   }, [x, y]);
 
   return createPortal(
-    <div
-      ref={ref}
-      className="menu"
-      role="menu"
-      aria-label="menu"
-      style={{ left: x, top: y, minWidth }}
-      onMouseDown={(e) => e.stopPropagation()}
-      onContextMenu={(e) => e.preventDefault()}
-    >
-      {items.map((it, i) => (
-        <button
-          key={`${it.label}-${i}`}
-          role="menuitem"
-          className={`menu-item${it.danger ? " danger" : ""}`}
-          disabled={it.disabled}
-          style={it.disabled ? { opacity: 0.4, pointerEvents: "none" } : undefined}
-          onClick={(e) => {
-            e.stopPropagation();
-            onClose();
-            it.onClick();
-          }}
-        >
-          {it.icon && <Icon name={it.icon} size={15} />}
-          <span>{it.label}</span>
-        </button>
-      ))}
-    </div>,
+    <>
+      <div
+        className="menu-scrim"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }}
+        onTouchStart={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onClose();
+        }}
+      />
+      <div
+        ref={ref}
+        className="menu"
+        role="menu"
+        aria-label="menu"
+        style={{ left: x, top: y, minWidth }}
+        onMouseDown={(e) => e.stopPropagation()}
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        {items.map((it, i) => (
+          <button
+            key={`${it.label}-${i}`}
+            role="menuitem"
+            className={`menu-item${it.danger ? " danger" : ""}`}
+            disabled={it.disabled}
+            style={it.disabled ? { opacity: 0.4, pointerEvents: "none" } : undefined}
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose();
+              it.onClick();
+            }}
+          >
+            {it.icon && <Icon name={it.icon} size={15} />}
+            <span>{it.label}</span>
+          </button>
+        ))}
+      </div>
+    </>,
     document.body,
   );
 }

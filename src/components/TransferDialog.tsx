@@ -108,7 +108,17 @@ export function TransferDialog({ bookPath, outline = null, onClose, onApplied }:
     let unlistenApplied: (() => void) | undefined;
     (async () => {
       try {
-        const first = await api.transferStart(bookPath);
+        let first = await api.transferStart(bookPath);
+        if (!alive.current) return;
+        // 手机上默认是手机 → 电脑；电脑端打开时保持电脑 → 手机。
+        if (isPhone && first.direction === "pc_to_phone") {
+          try {
+            /* direction request */
+            first = await api.transferDirection("phone_to_pc");
+          } catch {
+            /* 反向失败时保留原方向，仍可在页内切换 */
+          }
+        }
         if (!alive.current) return;
         setSnap(first);
         unlisten = await listen<TransferSnapshot>("transfer-update", (event) => {

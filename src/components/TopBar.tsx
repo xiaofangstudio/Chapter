@@ -60,6 +60,7 @@ export function TopBar(props: Props) {
 
   const [more, setMore] = useState<{ x: number; y: number } | null>(null);
   const [outlineMenu, setOutlineMenu] = useState<{ x: number; y: number } | null>(null);
+  const isPhone = typeof window !== "undefined" && window.matchMedia("(max-width: 820px)").matches;
 
   // 切到别的视图后，挂在按钮下面的“章节/整书大纲”菜单应当收起来，
   // 否则它会和编辑器里的字体面板、正文叠在一起，看起来像两个弹窗打架。
@@ -71,13 +72,18 @@ export function TopBar(props: Props) {
   }, [view]);
 
   const items: MenuItem[] = [
+    ...(isPhone
+      ? []
+      : [{ label: panel ? t("收起信息栏") : t("展开信息栏"), icon: "panel" as const, onClick: onTogglePanel }]),
+    { label: t("偏好设置"), icon: "settings", onClick: onSettings },
+    { label: theme === "light" ? t("切到夜幕") : t("切到夕阳"), icon: theme === "light" ? "moon" : "sun", onClick: onToggleTheme },
     { label: t("设置封面…"), icon: "image", onClick: onPickCover },
     { label: t("导出…"), icon: "export", onClick: onExport },
     { label: t("书籍设置…"), icon: "edit", onClick: onBookSettings },
     { label: t("副文本 · Markdown…"), icon: "file", onClick: onMatter },
     { label: t("导入书稿…"), icon: "download", onClick: onImport },
     { label: t("手机互传…"), icon: "arrow", onClick: onTransfer },
-    { label: t("版本与回档"), icon: "clock", onClick: onVersions },
+    ...(isPhone ? [] : [{ label: t("版本与回档"), icon: "clock" as const, onClick: onVersions }]),
     { label: t("版本历史"), icon: "file", onClick: onSnapshots },
     { label: t("回到书架"), icon: "book", onClick: onBack },
     { label: t("移到回收站"), icon: "trash", danger: true, onClick: onDeleteBook },
@@ -131,9 +137,13 @@ export function TopBar(props: Props) {
         <button
           className={`seg-btn${view === "outline" || view === "bookOutline" ? " on" : ""}`}
           onClick={(e) => {
-            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            setOutlineMenu({ x: r.left, y: r.bottom + 6 });
-            if (view !== "outline" && view !== "bookOutline") onView("outline");
+            if (view === "outline" || view === "bookOutline") {
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              setOutlineMenu({ x: r.left, y: r.bottom + 6 });
+              return;
+            }
+            setOutlineMenu(null);
+            onView("outline");
           }}
         >
           <Icon name="outline" size={14} />

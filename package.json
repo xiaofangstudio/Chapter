@@ -1,7 +1,7 @@
 {
   "name": "chapter",
   "private": true,
-  "version": "1.7.0",
+  "version": "1.8.0",
   "type": "module",
   "description": "Chapter · 小方工作室出品 · 全中文、永久免费开源（MIT）的长篇小说写作工作台",
   "license": "MIT",
@@ -15,9 +15,11 @@
     "tauri:build": "tauri build"
   },
   "dependencies": {
+    "@choochmeque/tauri-plugin-sharekit-api": "^0.4.0-rc.8",
     "@tauri-apps/api": "^2.12.1",
     "@tauri-apps/plugin-dialog": "^2.8.1",
     "@tauri-apps/plugin-opener": "^2.7.0",
+    "pinyin-pro": "^3.29.5",
     "qrcode": "^1.5.4",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"

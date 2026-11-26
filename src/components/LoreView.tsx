@@ -94,10 +94,12 @@ export function LoreView({ lore, onAdd, onEdit, onDelete, onInsert, onSaveLore, 
               <button onClick={() => setMode("graph")}>{t("图谱")}</button>
               <button onClick={() => setMode("map")}>{t("世界观地图")}</button>
             </div>
-            <button className="btn btn-primary" onClick={() => onAdd(kind)}>
-              <Icon name="plus" size={14} />
-              {t("新增")}{t(current.label)}
-            </button>
+            {entries.length > 0 && (
+              <button className="btn btn-primary" onClick={() => onAdd(kind)}>
+                <Icon name="plus" size={14} />
+                {t("新增")}{t(current.label)}
+              </button>
+            )}
           </div>
         </div>
 

@@ -1,11 +1,24 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, MutableRefObject } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import type { BookMeta, Chapter } from "../types";
+import type { BookMeta, Chapter, ProofreadConfig, ProofreadIssue } from "../types";
 import { countWords, countWordsChunked, escapeHtml, fmtNumber, fmtTime, fmtWords, htmlToMd, mdToHtml } from "../lib/text";
 import { t, tf } from "../lib/i18n";
 import { api } from "../lib/api";
 import { recallScroll, rememberScroll } from "../lib/viewMemory";
+import {
+  addIgnore,
+  buildIssueRanges,
+  caretOffset,
+  clearHighlights,
+  issueAt,
+  paintHighlights,
+  rangeFromOffsets,
+  replaceRange,
+  scanProofread,
+} from "../lib/proofread";
+import { ProofreadDialog, ProofreadPopover } from "./ProofreadDialog";
+import { FootnoteDialog } from "./FootnoteDialog";
 import { Icon } from "./Icon";
 
 interface Draft {
@@ -69,6 +82,9 @@ interface Props {
   bookWords: number;
   todayAdded: number;
   focusMode: boolean;
+  proofread: ProofreadConfig;
+  onProofread: (config: ProofreadConfig) => void;
+  onFootnotes: (footnotes: import("../types").Footnote[]) => void;
   onBody: (md: string) => void;
   onTitle: (title: string) => void;
   onSave: () => void;
@@ -87,6 +103,9 @@ export function Editor({
   bookWords,
   todayAdded,
   focusMode,
+  proofread,
+  onProofread,
+  onFootnotes,
   onBody,
   onTitle,
   onSave,
@@ -130,6 +149,20 @@ export function Editor({
     }
   });
   const fontPickRef = useRef<HTMLDivElement>(null);
+
+  const [issues, setIssues] = useState<ProofreadIssue[]>([]);
+  const [proofOpen, setProofOpen] = useState(false);
+  const [proofIssue, setProofIssue] = useState<ProofreadIssue | null>(null);
+  const [proofAnchor, setProofAnchor] = useState({ x: 0, y: 0, w: 0, h: 0 });
+  const [scanning, setScanning] = useState(false);
+  const [fnOpen, setFnOpen] = useState(false);
+  const fnCaret = useRef<number | null>(null);
+  const proofTimer = useRef<number | undefined>(undefined);
+  const proofConfigRef = useRef(proofread);
+  const proofIssuesRef = useRef<ProofreadIssue[]>([]);
+  const composingRef = useRef(false);
+  proofConfigRef.current = proofread;
+  proofIssuesRef.current = issues;
 
   const choice = FONT_OPTIONS.find((f) => f.id === fontChoice);
   const fontStack =
@@ -420,6 +453,121 @@ export function Editor({
     return () => document.removeEventListener("selectionchange", onSelection);
   }, [focusMode]);
 
+  // 输入停顿 400ms 后扫描；输入法组合期间不打断。
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    window.clearTimeout(proofTimer.current);
+    if (!proofread.enabled) {
+      setIssues([]);
+      setProofIssue(null);
+      clearHighlights();
+      return;
+    }
+    setScanning(true);
+    proofTimer.current = window.setTimeout(() => {
+      if (composingRef.current) {
+        setScanning(false);
+        return;
+      }
+      const text = el.textContent ?? "";
+      const found = scanProofread(text, proofConfigRef.current);
+      setIssues(found);
+      const ranges = buildIssueRanges(el, found);
+      paintHighlights(found, ranges);
+      setScanning(false);
+    }, 420);
+    return () => window.clearTimeout(proofTimer.current);
+  }, [body, proofread, chapter.id]);
+
+  useEffect(() => {
+    const onCompositionStart = () => {
+      composingRef.current = true;
+    };
+    const onCompositionEnd = () => {
+      composingRef.current = false;
+      const el = bodyRef.current;
+      if (!el || !proofConfigRef.current.enabled) return;
+      window.clearTimeout(proofTimer.current);
+      proofTimer.current = window.setTimeout(() => {
+        const text = el.textContent ?? "";
+        const found = scanProofread(text, proofConfigRef.current);
+        setIssues(found);
+        paintHighlights(found, buildIssueRanges(el, found));
+      }, 420);
+    };
+    document.addEventListener("compositionstart", onCompositionStart, true);
+    document.addEventListener("compositionend", onCompositionEnd, true);
+    return () => {
+      document.removeEventListener("compositionstart", onCompositionStart, true);
+      document.removeEventListener("compositionend", onCompositionEnd, true);
+      clearHighlights();
+    };
+  }, []);
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest(".proof-pop") || target?.closest(".proof-button")) return;
+      setProofIssue(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, []);
+
+  const openProofAtCaret = () => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const offset = caretOffset(el);
+    if (offset === null) return;
+    const hit = issueAt(proofIssuesRef.current, offset);
+    if (!hit) return;
+    const range = rangeFromOffsets(el, hit.start, hit.end);
+    if (!range) return;
+    const rect = range.getBoundingClientRect();
+    setProofAnchor({ x: rect.left, y: rect.top, w: rect.width, h: rect.height });
+    setProofIssue(hit);
+  };
+
+  const applyProofValue = (issue: ProofreadIssue, value: string) => {
+    const el = bodyRef.current;
+    if (!el) return;
+    if (replaceRange(el, issue, value)) {
+      setProofIssue(null);
+      handleInput();
+      window.setTimeout(() => {
+        const text = el.textContent ?? "";
+        const found = scanProofread(text, proofConfigRef.current);
+        setIssues(found);
+        paintHighlights(found, buildIssueRanges(el, found));
+      }, 420);
+    }
+  };
+
+  const ignoreProofIssue = (issue: ProofreadIssue) => {
+    const el = bodyRef.current;
+    if (!el) return;
+    onProofread(addIgnore(proofread, issue, el.textContent ?? ""));
+    setProofIssue(null);
+  };
+
+  const insertFootnoteMarker = (n: number) => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const offset = fnCaret.current ?? caretOffset(el);
+    if (offset === null) return;
+    const range = rangeFromOffsets(el, offset, offset);
+    if (!range) return;
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    el.focus();
+    document.execCommand("insertHTML", false, `<sup class="fn-ref" data-fn="${n}">${n}</sup>`);
+    fnCaret.current = offset + 1;
+    handleInput();
+    setFnOpen(false);
+  };
+
   const handleInput = () => {
     const el = bodyRef.current;
     if (!el) return;
@@ -533,6 +681,29 @@ export function Editor({
             <Icon name="file" size={16} />
             <span>{t("草稿箱")}</span>
             {drafts.length > 0 && <b className="draft-count">{drafts.length}</b>}
+          </button>
+          <button
+            className={`tbtn proof-button${proofIssue ? " on" : ""}`}
+            title={t("本书词库与校对")}
+            onClick={() => setProofOpen(true)}
+          >
+            <Icon name="check" size={15} />
+            <span>{t("校对")}</span>
+            {(issues.length > 0 || scanning) && (
+              <b className="proof-count">{scanning ? "…" : issues.length}</b>
+            )}
+          </button>
+          <button
+            className="tbtn"
+            title={t("章内脚注")}
+            onMouseDown={() => {
+              fnCaret.current = caretOffset(bodyRef.current ?? document.body);
+            }}
+            onClick={() => setFnOpen(true)}
+          >
+            <Icon name="book" size={15} />
+            <span>{t("脚注")}</span>
+            {(chapter.footnotes?.length ?? 0) > 0 && <b className="proof-count">{chapter.footnotes!.length}</b>}
           </button>
         </div>
         <span className="grow" />
@@ -648,6 +819,14 @@ export function Editor({
               spellCheck={false}
               style={{ fontFamily: fontStack }}
               onInput={handleInput}
+              onClick={(e) => {
+                const target = e.target as HTMLElement;
+                if (target.closest(".fn-ref")) {
+                  setFnOpen(true);
+                  return;
+                }
+                window.setTimeout(openProofAtCaret, 0);
+              }}
               onPaste={onPaste}
               onBlur={() => {
                 onSave();
@@ -661,6 +840,19 @@ export function Editor({
             />
             {empty && <div className="body-placeholder" style={{ fontFamily: fontStack }}>{t("从这里开始写……")}</div>}
           </div>
+          {proofIssue && (
+            <ProofreadPopover
+              issue={proofIssue}
+              anchor={proofAnchor}
+              onReplace={(value) => applyProofValue(proofIssue, value)}
+              onIgnore={() => ignoreProofIssue(proofIssue)}
+              onClose={() => setProofIssue(null)}
+              onOpenDictionary={() => {
+                setProofIssue(null);
+                setProofOpen(true);
+              }}
+            />
+          )}
         </article>
       </div>
 
@@ -734,6 +926,43 @@ export function Editor({
             ))}
           </div>
         </aside>
+      )}
+      {proofOpen && (
+        <ProofreadDialog
+          config={proofread}
+          issues={issues}
+          onClose={() => setProofOpen(false)}
+          onSave={(next) => {
+            onProofread(next);
+            setProofOpen(false);
+          }}
+          onReplace={(issue, value) => {
+            applyProofValue(issue, value);
+            setProofOpen(false);
+          }}
+          onIgnore={(issue) => {
+            ignoreProofIssue(issue);
+            setProofOpen(false);
+          }}
+          onRescan={() => {
+            const el = bodyRef.current;
+            if (!el) return;
+            const found = scanProofread(el.textContent ?? "", proofConfigRef.current);
+            setIssues(found);
+            paintHighlights(found, buildIssueRanges(el, found));
+          }}
+        />
+      )}
+      {fnOpen && (
+        <FootnoteDialog
+          footnotes={chapter.footnotes ?? []}
+          onClose={() => setFnOpen(false)}
+          onSave={(next) => {
+            onFootnotes(next);
+            setFnOpen(false);
+          }}
+          onInsert={insertFootnoteMarker}
+        />
       )}
     </>
   );

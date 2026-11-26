@@ -76,7 +76,8 @@ function inline(s: string): string {
   return escapeHtml(s.trim())
     .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" loading="lazy">')
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
+    .replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>")
+    .replace(/\[\^(\d+)\]/g, '<sup class="fn-ref" data-fn="$1">$1</sup>');
 }
 
 /** 受限 Markdown → 编辑器 HTML（只支持正文会用到的几种语法）。 */
@@ -177,6 +178,10 @@ function inlineToMd(node: Node): string {
   const el = node as HTMLElement;
   const tag = el.tagName;
   if (tag === "BR") return "\n";
+  if (tag === "SUP" && el.classList.contains("fn-ref")) {
+    const n = el.dataset.fn || el.textContent || "";
+    return `[^${n}]`;
+  }
   const inner = Array.from(el.childNodes).map(inlineToMd).join("");
   if (tag === "STRONG" || tag === "B") return `**${inner}**`;
   if (tag === "EM" || tag === "I") return `*${inner}*`;
@@ -237,7 +242,7 @@ export function htmlToMd(root: HTMLElement): string {
   // 那样保存会把长章“截断”成当前屏幕附近的内容。
   const plainBlocks = editorBlocks(root);
   const rich = root.querySelector(
-    "strong,b,em,i,blockquote,h1,h2,h3,h4,h5,h6,ul,ol,hr,br",
+    "strong,b,em,i,blockquote,h1,h2,h3,h4,h5,h6,ul,ol,hr,br,sup.fn-ref",
   );
   if (!rich) {
     const plain: string[] = [];

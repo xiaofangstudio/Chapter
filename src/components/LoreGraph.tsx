@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Lore, LoreEntry, LoreKind, LoreRelation } from "../types";
+import type { Lore, LoreEntry, LoreKind, LoreRelation, RelationKind } from "../types";
+import { RELATION_KINDS } from "../types";
 import { t } from "../lib/i18n";
 import { Icon } from "./Icon";
 
@@ -60,14 +61,17 @@ export function LoreGraph({ lore, kind, onSave, onEdit, onAdd, onDelete, worldOn
   const [pos, setPos] = useState<Record<string, Pos>>({});
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
-  const [relationForm, setRelationForm] = useState<{ from: string; to: string; label: string } | null>(null);
+  const [relationForm, setRelationForm] = useState<{ from: string; to: string; label: string; kind: RelationKind } | null>(null);
+  const [focusId, setFocusId] = useState<string | null>(null);
   const [worldView, setWorldView] = useState(worldOnly);
   const [pinPlace, setPinPlace] = useState<string | null>(null);
   const boardRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const portraitFor = useRef<string | null>(null);
   const dragRef = useRef<{ id: string; moved: boolean } | null>(null);
+  const nodeHold = useRef<number | null>(null);
   const pinDrag = useRef<string | null>(null);
+  const isMobile = typeof window !== "undefined" && window.matchMedia("(max-width: 820px)").matches;
 
   useEffect(() => {
     const next: Record<string, Pos> = {};
@@ -81,6 +85,7 @@ export function LoreGraph({ lore, kind, onSave, onEdit, onAdd, onDelete, worldOn
     setMenu(null);
     setConnectFrom(null);
     setRelationForm(null);
+    setFocusId(null);
   }, [entries]);
 
   const relations = useMemo(
@@ -115,6 +120,25 @@ export function LoreGraph({ lore, kind, onSave, onEdit, onAdd, onDelete, worldOn
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
     dragRef.current = { id, moved: false };
+    if (isMobile) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const box = boardRef.current?.getBoundingClientRect();
+      window.clearTimeout(nodeHold.current ?? undefined);
+      nodeHold.current = window.setTimeout(() => {
+        dragRef.current = null;
+        setMenu({
+          id,
+          x: rect.left - (box?.left ?? 0) + rect.width / 2,
+          y: rect.bottom - (box?.top ?? 0) + 6,
+        });
+        if (navigator.vibrate) navigator.vibrate(18);
+      }, 460);
+    }
+  };
+
+  const clearNodeHold = () => {
+    window.clearTimeout(nodeHold.current ?? undefined);
+    nodeHold.current = null;
   };
 
   const onBoardPointerMove = (e: React.PointerEvent) => {
@@ -132,12 +156,14 @@ export function LoreGraph({ lore, kind, onSave, onEdit, onAdd, onDelete, worldOn
       return;
     }
     if (!dragRef.current) return;
+    clearNodeHold();
     const p = boardPoint(e.clientX, e.clientY);
     dragRef.current.moved = true;
     setPos((cur) => ({ ...cur, [dragRef.current!.id]: p }));
   };
 
   const endDrag = () => {
+    clearNodeHold();
     if (pinDrag.current) pinDrag.current = null;
     const drag = dragRef.current;
     if (!drag) return;
@@ -147,27 +173,65 @@ export function LoreGraph({ lore, kind, onSave, onEdit, onAdd, onDelete, worldOn
     if (p) persistEntry(drag.id, { gx: p.x, gy: p.y });
   };
 
+  const autoLayout = (mode: "grid" | "circle" | "ring") => {
+    const next: Record<string, Pos> = {};
+    if (mode === "circle" || mode === "ring") {
+      entries.forEach((e, i) => {
+        const angle = -Math.PI / 2 + (Math.PI * 2 * i) / Math.max(1, entries.length);
+        const radius = mode === "ring" ? 0.31 : 0.22 + (i % 2) * 0.09;
+        next[e.id] = { x: 0.5 + Math.cos(angle) * radius, y: 0.5 + Math.sin(angle) * radius };
+      });
+    } else {
+      const cols = Math.max(2, Math.ceil(Math.sqrt(entries.length)));
+      const rows = Math.max(1, Math.ceil(entries.length / cols));
+      entries.forEach((e, i) => {
+        next[e.id] = {
+          x: 0.16 + (i % cols) / Math.max(1, cols - 1) * 0.68,
+          y: 0.16 + Math.floor(i / cols) / Math.max(1, rows - 1) * 0.68,
+        };
+      });
+    }
+    setPos(next);
+    persist({
+      entries: lore.entries.map((e) =>
+        e.kind === kind && next[e.id] ? { ...e, gx: next[e.id].x, gy: next[e.id].y } : e,
+      ),
+    });
+  };
+
   const relationLine = (r: LoreRelation) => {
     const a = pos[r.from];
     const b = pos[r.to];
     if (!a || !b) return null;
+    const kind = RELATION_KINDS.find((x) => x.key === r.kind) ?? RELATION_KINDS[RELATION_KINDS.length - 1];
+    const same = relations.filter(
+      (x) => (x.from === r.from && x.to === r.to) || (x.from === r.to && x.to === r.from),
+    );
+    const offset = same.length > 1 ? (same.indexOf(r) - (same.length - 1) / 2) * 34 : 0;
+    const dx = b.x * 1000 - a.x * 1000;
+    const dy = b.y * 1000 - a.y * 1000;
+    const len = Math.max(1, Math.hypot(dx, dy));
+    const nx = -dy / len;
+    const ny = dx / len;
+    const mx = (a.x + b.x) * 500 + nx * offset;
+    const my = (a.y + b.y) * 500 + ny * offset;
     return (
       <g key={r.id}>
-        <line
-          x1={a.x * 1000}
-          y1={a.y * 1000}
-          x2={b.x * 1000}
-          y2={b.y * 1000}
+        <path
+          d={`M ${a.x * 1000} ${a.y * 1000} Q ${mx} ${my} ${b.x * 1000} ${b.y * 1000}`}
           className="lg-line"
+          style={{ stroke: kind.color }}
+          markerEnd="url(#lg-arrow)"
         />
-        {r.label && (
+        {(r.label || r.kind) && (
           <text
-            x={(a.x + b.x) * 500}
-            y={(a.y + b.y) * 500 - 6}
+            x={mx}
+            y={my - 7}
             textAnchor="middle"
             className="lg-line-label"
+            style={{ fill: kind.color }}
           >
-            {r.label}
+            {r.label || kind.label}
           </text>
         )}
       </g>
@@ -324,12 +388,31 @@ export function LoreGraph({ lore, kind, onSave, onEdit, onAdd, onDelete, worldOn
     <div className="lore-graph-wrap">
       <div className="lore-graph-bar">
         <span>
-          {connectFrom ? t("再点一个节点，填上关系") : t("拖动节点改位置；右键节点可连线、标色、加皇冠、传立绘。")}
+          {connectFrom
+            ? t("再点一个节点，填上关系")
+            : isMobile
+              ? t("拖动节点改位置；长按节点可连线、标色、加皇冠、传立绘。")
+              : t("拖动节点改位置；右键节点可连线、标色、加皇冠、传立绘。")}
         </span>
         <button className="btn btn-ghost btn-xs" onClick={onAdd}>
           <Icon name="plus" size={13} />
           {t("新增")}
         </button>
+        {kind !== "place" && entries.length > 1 && (
+          <>
+            <button className="btn btn-ghost btn-xs" onClick={() => autoLayout("grid")} title={t("网格自动布局")}>
+              {t("网格")}
+            </button>
+            <button className="btn btn-ghost btn-xs" onClick={() => autoLayout("circle")} title={t("环形自动布局")}>
+              {t("环形")}
+            </button>
+          </>
+        )}
+        {focusId && (
+          <button className="btn btn-ghost btn-xs" onClick={() => setFocusId(null)}>
+            {t("显示全部")}
+          </button>
+        )}
         {kind === "place" && !worldOnly && (
           <button className="btn btn-ghost btn-xs" onClick={() => setWorldView(true)}>
             <Icon name="pin" size={13} />
@@ -352,6 +435,11 @@ export function LoreGraph({ lore, kind, onSave, onEdit, onAdd, onDelete, worldOn
         onContextMenu={(e) => e.preventDefault()}
       >
         <svg className="lore-lines" viewBox="0 0 1000 1000" preserveAspectRatio="none">
+          <defs>
+            <marker id="lg-arrow" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 z" fill="currentColor" opacity=".75" />
+            </marker>
+          </defs>
           {relations.map(relationLine)}
         </svg>
 
@@ -359,10 +447,17 @@ export function LoreGraph({ lore, kind, onSave, onEdit, onAdd, onDelete, worldOn
           const p = pos[e.id];
           if (!p) return null;
           const color = e.color ?? "var(--accent)";
+          const focused =
+            !focusId ||
+            focusId === e.id ||
+            relations.some(
+              (r) =>
+                (r.from === focusId && r.to === e.id) || (r.to === focusId && r.from === e.id),
+            );
           return (
             <div
               key={e.id}
-              className={`lore-node${connectFrom === e.id ? " on" : ""}${e.crown ? " crown" : ""}`}
+              className={`lore-node${connectFrom === e.id ? " on" : ""}${e.crown ? " crown" : ""}${focused ? "" : " dim"}`}
               style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%`, "--node-color": color } as React.CSSProperties}
               onPointerDown={startDrag(e.id)}
               onContextMenu={(ev) => {
@@ -378,8 +473,10 @@ export function LoreGraph({ lore, kind, onSave, onEdit, onAdd, onDelete, worldOn
               onClick={(ev) => {
                 ev.stopPropagation();
                 if (connectFrom && connectFrom !== e.id) {
-                  setRelationForm({ from: connectFrom, to: e.id, label: "" });
+                  setRelationForm({ from: connectFrom, to: e.id, label: "", kind: "other" });
                   setConnectFrom(null);
+                } else {
+                  setFocusId((cur) => (cur === e.id ? null : e.id));
                 }
                 setMenu(null);
               }}
@@ -482,7 +579,11 @@ export function LoreGraph({ lore, kind, onSave, onEdit, onAdd, onDelete, worldOn
 
       <div className="lore-relations">
         {relations.length === 0 ? (
-          <span className="lore-rel-empty">{t("还没有连线。右键一个节点，选「从这里连线」。")}</span>
+          <span className="lore-rel-empty">
+            {isMobile
+              ? t("还没有连线。长按一个节点，选「从这里连线」。")
+              : t("还没有连线。右键一个节点，选「从这里连线」。")}
+          </span>
         ) : (
           relations.map((r) => (
             <div className="lore-rel" key={r.id}>
@@ -518,6 +619,18 @@ export function LoreGraph({ lore, kind, onSave, onEdit, onAdd, onDelete, worldOn
           <strong>
             {byId.get(relationForm.from)?.name} → {byId.get(relationForm.to)?.name}
           </strong>
+          <div className="lore-rel-kinds">
+            {RELATION_KINDS.map((k) => (
+              <button
+                key={k.key}
+                className={relationForm.kind === k.key ? "on" : ""}
+                style={{ "--rel-color": k.color } as React.CSSProperties}
+                onClick={() => setRelationForm({ ...relationForm, kind: k.key })}
+              >
+                {t(k.label)}
+              </button>
+            ))}
+          </div>
           <input
             autoFocus
             value={relationForm.label}
@@ -528,7 +641,7 @@ export function LoreGraph({ lore, kind, onSave, onEdit, onAdd, onDelete, worldOn
                 persist({
                   relations: [
                     ...(lore.relations ?? []),
-                    { id: `rel_${Date.now()}`, from: relationForm.from, to: relationForm.to, label: relationForm.label.trim() || t("关系") },
+                    { id: `rel_${Date.now()}`, from: relationForm.from, to: relationForm.to, label: relationForm.label.trim() || t("关系"), kind: relationForm.kind },
                   ],
                 });
                 setRelationForm(null);
@@ -546,7 +659,7 @@ export function LoreGraph({ lore, kind, onSave, onEdit, onAdd, onDelete, worldOn
                 persist({
                   relations: [
                     ...(lore.relations ?? []),
-                    { id: `rel_${Date.now()}`, from: relationForm.from, to: relationForm.to, label: relationForm.label.trim() || t("关系") },
+                    { id: `rel_${Date.now()}`, from: relationForm.from, to: relationForm.to, label: relationForm.label.trim() || t("关系"), kind: relationForm.kind },
                   ],
                 });
                 setRelationForm(null);

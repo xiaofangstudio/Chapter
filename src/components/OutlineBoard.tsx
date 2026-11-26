@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import type { Outline } from "../types";
+import type { Lore, Outline } from "../types";
 import { fmtNumber } from "../lib/text";
 import { t, tf } from "../lib/i18n";
 import { recallScroll, rememberScroll } from "../lib/viewMemory";
 import { Icon } from "./Icon";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
+import { SceneBoard } from "./SceneBoard";
 
 interface Props {
   bookPath: string;
   outline: Outline;
+  lore: Lore;
   activeId: string | null;
   onOpen: (id: string) => void;
   onSummary: (chapterId: string, text: string) => void;
@@ -19,12 +21,16 @@ interface Props {
   onDeleteChapter: (chapterId: string) => void;
   onRenameVolume: (volId: string) => void;
   onDeleteVolume: (volId: string) => void;
+  onAddScene: (chapterId: string) => void;
+  onEditScene: (chapterId: string, sceneId: string) => void;
+  onMoveScene: (chId: string, sceneId: string, toChapterId: string, beforeId: string | null) => void;
 }
 
 export function OutlineBoard(props: Props) {
   const {
     bookPath,
     outline,
+    lore,
     activeId,
     onOpen,
     onSummary,
@@ -35,7 +41,11 @@ export function OutlineBoard(props: Props) {
     onDeleteChapter,
     onRenameVolume,
     onDeleteVolume,
+    onAddScene,
+    onEditScene,
+    onMoveScene,
   } = props;
+  const [sceneMode, setSceneMode] = useState(false);
   const [drag, setDrag] = useState<{ vol: string; id: string } | null>(null);
   const [over, setOver] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
@@ -94,6 +104,20 @@ export function OutlineBoard(props: Props) {
     });
   };
 
+  if (sceneMode) {
+    return (
+      <SceneBoard
+        outline={outline}
+        lore={lore}
+        onOpenChapter={onOpen}
+        onAddScene={onAddScene}
+        onEditScene={onEditScene}
+        onMoveScene={onMoveScene}
+        onBack={() => setSceneMode(false)}
+      />
+    );
+  }
+
   return (
     <div className="view-scroll" ref={scrollRef}>
       <div className="view-inner">
@@ -104,6 +128,10 @@ export function OutlineBoard(props: Props) {
             <p>{t("一张卡片一章。先把故事拆明白，再回去写细节；拖动卡片调顺序，改动即时保存。")}</p>
           </div>
           <div className="view-head-actions">
+            <button className="btn btn-outline" onClick={() => setSceneMode(true)}>
+              <Icon name="box" size={14} />
+              {t("场景板")}
+            </button>
             <button className="btn btn-outline" onClick={onAddVolume}>
               <Icon name="plus" size={14} />
               {t("新建一卷")}

@@ -15,6 +15,7 @@ interface Props {
   onAddScene: () => void;
   onEditScene: (sceneId: string) => void;
   onDeleteScene: (sceneId: string) => void;
+  onClose?: () => void;
 }
 
 export function InfoPanel({
@@ -29,6 +30,7 @@ export function InfoPanel({
   onAddScene,
   onEditScene,
   onDeleteScene,
+  onClose,
 }: Props) {
   const todayPct =
     meta.dailyGoal > 0 ? Math.min(100, Math.round((todayAdded / meta.dailyGoal) * 100)) : 0;
@@ -38,6 +40,9 @@ export function InfoPanel({
 
   return (
     <aside className="info-panel">
+      <button className="info-close icon-btn" onClick={onClose} aria-label={t("关闭")}>
+        <Icon name="close" size={15} />
+      </button>
       <div className="panel-card">
         <div className="panel-title">
           <span>{t("今日")}</span>

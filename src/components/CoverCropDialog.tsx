@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { t } from "../lib/i18n";
 import { Icon } from "./Icon";
@@ -21,7 +21,18 @@ export function CoverCropDialog({ src, fileName, onClose, onConfirm }: Props) {
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [busy, setBusy] = useState(false);
+  const [isPhone, setIsPhone] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(max-width: 820px)").matches,
+  );
   const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 820px)");
+    const sync = () => setIsPhone(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
 
   const base = natural.w && natural.h ? Math.max(STAGE_W / natural.w, STAGE_H / natural.h) : 1;
   const drawnW = natural.w * base * zoom;
@@ -95,7 +106,11 @@ export function CoverCropDialog({ src, fileName, onClose, onConfirm }: Props) {
   return (
     <Modal
       title={t("设置封面…")}
-      subtitle={t("拖动画面取景，右侧滑杆可以放大。")}
+      subtitle={t(
+        isPhone
+          ? "拖动画面取景，下方滑杆可以放大。"
+          : "拖动画面取景，右侧滑杆可以放大。",
+      )}
       wide
       onClose={busy ? () => undefined : onClose}
       actions={

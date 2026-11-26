@@ -1,3 +1,18 @@
+export interface NumberingRule {
+  unit: "chapter" | "hui" | "volume";
+  style: "arabic" | "chinese";
+  pattern: string;
+  startAt: number;
+  perVolumeRestart: boolean;
+  specialPrefix?: string;
+}
+
+export interface Footnote {
+  id: string;
+  text: string;
+  createdAt: number;
+}
+
 export interface BookMeta {
   id: string;
   title: string;
@@ -10,6 +25,7 @@ export interface BookMeta {
   lastChapterId: string | null;
   daily: { date: string; base: number } | null;
   wordCount?: number;
+  numbering?: NumberingRule;
   /** 小说简介，只用于介绍页，不参与正文统计。 */
   description?: string;
   /** 整书大纲：受限 Markdown，单独于章节大纲保存。 */
@@ -44,6 +60,14 @@ export interface Scene {
   id: string;
   title: string;
   summary: string;
+  timeText?: string;
+  timeOrder?: number;
+  place?: string;
+  placeId?: string;
+  characterIds?: string[];
+  chapterId?: string;
+  order?: number;
+  color?: string;
 }
 
 export interface Chapter {
@@ -55,6 +79,7 @@ export interface Chapter {
   updatedAt: number;
   /** 章内编辑器类型；旧章节没有这个字段，按所在书的 kind 决定。 */
   kind?: "novel" | "comic";
+  footnotes?: Footnote[];
 }
 
 export interface Volume {
@@ -68,7 +93,18 @@ export interface Outline {
   volumes: Volume[];
 }
 
-export type LoreKind = "character" | "place" | "item";
+export type LoreKind = "character" | "place" | "item" | "org";
+
+export type RelationKind = "kin" | "ally" | "rival" | "love" | "serve" | "other";
+
+export const RELATION_KINDS: { key: RelationKind; label: string; color: string }[] = [
+  { key: "kin", label: "亲属", color: "#8a6a4a" },
+  { key: "ally", label: "盟友", color: "#4f8f6a" },
+  { key: "rival", label: "敌对", color: "#b45245" },
+  { key: "love", label: "恋爱", color: "#b06a8f" },
+  { key: "serve", label: "从属", color: "#6b7fa3" },
+  { key: "other", label: "其他", color: "#7a746b" },
+];
 
 export interface LoreField {
   k: string;
@@ -97,6 +133,7 @@ export interface LoreRelation {
   from: string;
   to: string;
   label: string;
+  kind?: RelationKind;
 }
 
 export interface WorldPin {
@@ -157,11 +194,58 @@ export interface SeriesCharacter {
   shared: boolean;
 }
 
+export interface ProofreadTerm {
+  id: string;
+  text: string;
+  enabled: boolean;
+  note: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ProofreadPunctuation {
+  enabled: boolean;
+  rules: {
+    halfWidth: boolean;
+    quotes: boolean;
+    ellipsis: boolean;
+    duplicates: boolean;
+  };
+}
+
+export interface ProofreadIgnored {
+  termId: string;
+  contextHash: string;
+  span: [number, number];
+}
+
+export interface ProofreadConfig {
+  version: number;
+  enabled?: boolean;
+  terms: ProofreadTerm[];
+  punctuation: ProofreadPunctuation;
+  ignored: ProofreadIgnored[];
+}
+
+export interface ProofreadIssue {
+  id: string;
+  kind: "term" | "punctuation";
+  start: number;
+  end: number;
+  text: string;
+  message: string;
+  suggestions: string[];
+  confidence: "high" | "normal";
+  termId?: string;
+  rule: string;
+}
+
 export interface RawProject {
   path: string;
   book: string;
   outline: string;
   lore: string;
+  proofread?: string;
   chapters: { id: string; body: string }[];
 }
 
@@ -177,6 +261,7 @@ export interface Project {
   meta: BookMeta;
   outline: Outline;
   lore: Lore;
+  proofread: ProofreadConfig;
   bodies: Record<string, string>;
 }
 
@@ -546,4 +631,5 @@ export const LORE_KINDS: { key: LoreKind; label: string; icon: string }[] = [
   { key: "character", label: "人物", icon: "user" },
   { key: "place", label: "地点", icon: "pin" },
   { key: "item", label: "物品", icon: "box" },
+  { key: "org", label: "组织", icon: "users" },
 ];

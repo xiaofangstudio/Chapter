@@ -62,6 +62,17 @@ export const api = {
     invoke<string>("comic_save_asset", { path, pageId, name, dataUrl }),
   comicSaveThumbnail: (path: string, pageId: string, dataUrl: string) =>
     invoke<void>("comic_save_thumbnail", { path, pageId, dataUrl }),
+  comicExportBegin: () => invoke<string>("comic_export_begin"),
+  comicExportAddPage: (tempDir: string, name: string, dataUrl: string) =>
+    invoke<void>("comic_export_add_page", { tempDir, name, dataUrl }),
+  comicExportFinish: (tempDir: string, dest: string) =>
+    invoke<number>("comic_export_finish", { tempDir, dest }),
+  comicExportDiscard: (tempDir: string) =>
+    invoke<void>("comic_export_discard", { tempDir }),
+  comicExportSingle: (dest: string, name: string, dataUrl: string) =>
+    invoke<string>("comic_export_single", { dest, name, dataUrl }),
+  comicExportToApp: (name: string, dataUrl?: string, tempDir?: string) =>
+    invoke<string>("comic_export_to_app", { name, dataUrl, tempDir }),
   comicNewPage: (path: string, title: string, chapterId?: string) =>
     invoke<ComicPagePayload>("comic_new_page", { path, title, chapterId }),
   comicDeletePage: (path: string, pageId: string) =>
@@ -88,10 +99,14 @@ export const api = {
     invoke<RawProject>("restore_snapshot", { path, name }),
   exportBook: (path: string, format: string, dest: string) =>
     invoke<string>("export_book", { path, format, dest }),
+  exportBookToApp: (path: string, format: string, fileName: string) =>
+    invoke<string>("export_book_to_app", { path, format, fileName }),
   printExport: (doc: unknown, dest: string, format: "pdf" | "word") =>
     invoke<string>("print_export", { doc, dest, format }),
   countText: (text: string) => invoke<number>("count_text", { text }),
   readImportFile: (path: string) => invoke<ImportDoc>("read_import_file", { path }),
+  readImportBytes: (name: string, format: string, data: string) =>
+    invoke<ImportDoc>("read_import_bytes", { name, format, data }),
   imageData: (path: string) => invoke<string>("image_data", { path }),
   fontData: (path: string) => invoke<string>("font_data", { path }),
   mcpStatus: () => invoke<McpStatus>("mcp_status"),

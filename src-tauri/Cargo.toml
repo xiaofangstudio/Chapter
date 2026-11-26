@@ -1,6 +1,6 @@
 [package]
 name = "chapter"
-version = "1.7.0"
+version = "1.8.0"
 description = "Chapter · 小方工作室出品 · 全中文、永久免费开源（MIT）的长篇小说写作工作台"
 authors = ["小方工作室"]
 license = "MIT"
@@ -30,6 +30,7 @@ tiny_http = "0.12"
 # 手机互传：内容指纹与一次性口令
 sha2 = "0.10"
 fastrand = "2"
+tauri-plugin-sharekit = "0.4.0-rc.8"
 
 [profile.release]
 opt-level = "s"

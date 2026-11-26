@@ -2,6 +2,7 @@ import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, use
 import { flushSync } from "react-dom";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { shareFile } from "@choochmeque/tauri-plugin-sharekit-api";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import type {
@@ -9,6 +10,7 @@ import type {
   BookMeta,
   BookSummary,
   Chapter,
+  Footnote,
   HomeMode,
   ImportDoc,
   LightEffect,
@@ -16,11 +18,14 @@ import type {
   LoreEntry,
   LoreKind,
   MotionMode,
+  NumberingRule,
   Outline,
   PaperTexture,
   Project,
+  ProofreadConfig,
   RawProject,
   SaveState,
+  Scene,
   SeriesMeta,
   SnapshotInfo,
   ThemeMode,
@@ -55,6 +60,8 @@ import { LANGUAGES } from "./types";
 import { api, errText } from "./lib/api";
 performance.mark?.("chapter:app-module");
 import { countWords, dateKey } from "./lib/text";
+import { normalizeProofread } from "./lib/proofread";
+import { formatChapterTitle, normalizeNumbering } from "./lib/numbering";
 import { ensureUiPack, setUiLanguage, t, tf } from "./lib/i18n";
 import { useProximityGlow } from "./lib/glow";
 import { Splash } from "./components/Splash";
@@ -63,6 +70,13 @@ import { Welcome } from "./components/Welcome";
 import { WorkspaceHome } from "./components/WorkspaceHome";
 import { TopBar } from "./components/TopBar";
 import { Sidebar } from "./components/Sidebar";
+
+declare global {
+  interface Window {
+    __chapterBack?: () => boolean;
+    __chapterBackExtra?: () => boolean;
+  }
+}
 import type { EditorHandle } from "./components/Editor";
 import { InfoPanel } from "./components/InfoPanel";
 import {
@@ -78,6 +92,7 @@ import {
   SceneEditorDialog,
 } from "./components/Modals";
 import { CoverCropDialog } from "./components/CoverCropDialog";
+import { CoverDesignerDialog } from "./components/CoverDesignerDialog";
 import { CoverPickerDialog } from "./components/CoverPickerDialog";
 import { TransferDialog } from "./components/TransferDialog";
 
@@ -143,8 +158,30 @@ function normalizeOutline(raw: unknown): Outline {
                 id: (sc.id as string) || `s_${Date.now()}_${vi}_${ci}_${si}`,
                 title: (sc.title as string) || "",
                 summary: (sc.summary as string) || "",
+                timeText: typeof sc.timeText === "string" ? sc.timeText : undefined,
+                timeOrder: typeof sc.timeOrder === "number" ? sc.timeOrder : undefined,
+                place: typeof sc.place === "string" ? sc.place : undefined,
+                placeId: typeof sc.placeId === "string" ? sc.placeId : undefined,
+                characterIds: Array.isArray(sc.characterIds)
+                  ? sc.characterIds.filter((x): x is string => typeof x === "string")
+                  : undefined,
+                chapterId: typeof sc.chapterId === "string" ? sc.chapterId : undefined,
+                order: typeof sc.order === "number" ? sc.order : undefined,
+                color: typeof sc.color === "string" ? sc.color : undefined,
               };
             }),
+            footnotes: Array.isArray(ch.footnotes)
+              ? ch.footnotes
+                  .filter((f) => !!f && typeof f === "object")
+                  .map((f, fi) => {
+                    const fn = f as Record<string, unknown>;
+                    return {
+                      id: (fn.id as string) || `fn_${Date.now()}_${fi}`,
+                      text: (fn.text as string) || "",
+                      createdAt: Number(fn.createdAt) || 0,
+                    };
+                  })
+              : undefined,
           };
         }),
       };
@@ -188,13 +225,20 @@ function parseProject(raw: RawProject): Project {
     wordCount: 0,
     description: "",
     bookOutline: "",
+    numbering: undefined,
     ...safeParse(raw.book, {}),
   };
+  if (!meta.numbering) {
+    meta.numbering = meta.kind === "comic"
+      ? { unit: "hui", style: "arabic", pattern: "第{n}话", startAt: 1, perVolumeRestart: false }
+      : { unit: "chapter", style: "arabic", pattern: "第{n}章", startAt: 1, perVolumeRestart: false };
+  }
   // 旧工程只存了 cover 文件、没存 coverMode；有封面文件就是自定义封面。
   // 不补这一步，封面选择器会误以为在用默认封面，先给一排无意义的书脊色。
   if (meta.cover && !meta.coverMode) meta.coverMode = "custom";
   const outline = normalizeOutline(safeParse(raw.outline, { volumes: [] }));
   const lore = normalizeLore(safeParse(raw.lore, { entries: [] }));
+  const proofread = normalizeProofread(safeParse(raw.proofread ?? "{}", {}));
   const bodies: Record<string, string> = {};
   raw.chapters.forEach((c) => {
     bodies[c.id] = c.body ?? "";
@@ -204,7 +248,7 @@ function parseProject(raw: RawProject): Project {
       if (bodies[c.id] === undefined) bodies[c.id] = "";
     }),
   );
-  return { path: raw.path, meta, outline, lore, bodies };
+  return { path: raw.path, meta, outline, lore, proofread, bodies };
 }
 
 function allChapters(outline: Outline): Chapter[] {
@@ -262,6 +306,9 @@ type UndoEntry = {
   files?: UndoFile[];
 };
 
+const IS_ANDROID_APP =
+  typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+
 export default function App() {
   useProximityGlow();
   const [books, setBooks] = useState<BookSummary[]>([]);
@@ -274,13 +321,17 @@ export default function App() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [editorEpoch, setEditorEpoch] = useState(0);
   const [view, setView] = useState<ViewKind>("write");
+  const [comicExportSignal, setComicExportSignal] = useState(0);
   const [loreMode, setLoreMode] = useState<"cards" | "graph" | "map">("cards");
   const [focus, setFocus] = useState(false);
-  const [panel, setPanel] = useState(true);
+  const [panel, setPanel] = useState(() =>
+    typeof window === "undefined" ? true : !window.matchMedia("(max-width: 820px)").matches
+  );
   const [mobileNav, setMobileNav] = useState(false);
 
   useEffect(() => {
     if (view === "write" && project?.meta.kind === "comic") setPanel(false);
+    if (window.matchMedia("(max-width: 820px)").matches) setPanel(false);
     setMobileNav(false);
   }, [view, project?.meta.kind, project?.path]);
   const [saveState, setSaveState] = useState<SaveState>("idle");
@@ -393,6 +444,7 @@ export default function App() {
     name: string;
   } | null>(null);
   const [coverPickerOpen, setCoverPickerOpen] = useState(false);
+  const [coverDesignerOpen, setCoverDesignerOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferBookPath, setTransferBookPath] = useState<string | null>(null);
 
@@ -403,6 +455,9 @@ export default function App() {
   const toastSeq = useRef(0);
   const projectRef = useRef<Project | null>(null);
   const packageInputRef = useRef<HTMLInputElement | null>(null);
+  const androidImportRef = useRef<HTMLInputElement | null>(null);
+  const androidImportMode = useRef<"new" | "append">("new");
+  const androidCoverRef = useRef<HTMLInputElement | null>(null);
   const activeRef = useRef<string | null>(null);
   const editorRef = useRef<EditorHandle | null>(null);
   const lastSaved = useRef<Record<string, string>>({});
@@ -1105,6 +1160,47 @@ export default function App() {
     void backToShelf();
   };
 
+  // Android 系统返回统一走这里：每次只关最上面一层。
+  useEffect(() => {
+    window.__chapterBack = () => {
+      if (document.querySelector(".menu")) {
+        document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+        return true;
+      }
+      const localModal = document.querySelector<HTMLElement>(".backdrop .modal");
+      if (localModal) {
+        localModal.querySelector<HTMLElement>(".modal-head .icon-btn")?.click();
+        return true;
+      }
+      if (modal) {
+        closeModal();
+        return true;
+      }
+      if (window.__chapterBackExtra?.()) return true;
+      if (panel) {
+        setPanel(false);
+        return true;
+      }
+      if (mobileNav) {
+        setMobileNav(false);
+        return true;
+      }
+      if (projectRef.current) {
+        if (!intro) {
+          setIntro(true);
+          setView("write");
+          return true;
+        }
+        void backToShelf();
+        return true;
+      }
+      return false;
+    };
+    return () => {
+      delete window.__chapterBack;
+    };
+  }, [modal, panel, mobileNav, intro, closeModal, backToShelf]);
+
   /** 外部工具（MCP / Git）改过磁盘后，只重读当前工程，不替用户写回任何东西。 */
   const reloadFromDisk = useCallback(async (focusChapter?: string) => {
     const p = projectRef.current;
@@ -1268,7 +1364,9 @@ export default function App() {
         commit({ ...p, meta });
         api.saveJson(p.path, "book.json", JSON.stringify(meta)).catch(() => undefined);
       }
-      window.setTimeout(() => editorRef.current?.focus(), 120);
+      window.setTimeout(() => {
+        if (!IS_ANDROID_APP) editorRef.current?.focus();
+      }, 120);
     },
     [commit, intro, saveAll, view],
   );
@@ -1287,7 +1385,9 @@ export default function App() {
         commit({ ...p, meta });
         api.saveJson(p.path, "book.json", JSON.stringify(meta)).catch(() => undefined);
       }
-      window.setTimeout(() => editorRef.current?.focus(), 160);
+      window.setTimeout(() => {
+        if (!IS_ANDROID_APP) editorRef.current?.focus();
+      }, 160);
     },
     [commit, saveAll],
   );
@@ -1427,7 +1527,12 @@ export default function App() {
       }
       const id = `c_${Date.now()}`;
       const comic = p.meta.kind === "comic";
-      const title = comic ? `第${vol.chapters.length + 1}话` : `第${vol.chapters.length + 1}章`;
+      const globalIndex = outline.volumes.reduce((n, v) => n + v.chapters.length, 0);
+      const title = formatChapterTitle(
+        normalizeNumbering(p.meta.numbering, p.meta),
+        globalIndex,
+        vol.chapters.length,
+      );
       const ch: Chapter = {
         id,
         title,
@@ -1453,29 +1558,37 @@ export default function App() {
       } catch (e) {
         toast(`创建章节失败：${errText(e)}`, { warn: true });
       }
-      if (!comic) window.setTimeout(() => editorRef.current?.focus(), 120);
+      if (!comic && !IS_ANDROID_APP) window.setTimeout(() => editorRef.current?.focus(), 120);
     },
     [commit, saveAll, scheduleOutline, toast],
   );
 
-  const addScene = useCallback((chapterId: string, scene?: { id: string; title: string; summary: string }) => {
+  const updateFootnotes = useCallback(
+    (chapterId: string, footnotes: Footnote[]) => {
+      applyOutline((o) => {
+        const c = o.volumes.flatMap((v) => v.chapters).find((x) => x.id === chapterId);
+        if (c) c.footnotes = footnotes.length ? footnotes : undefined;
+        return o;
+      });
+    },
+    [applyOutline],
+  );
+
+  const addScene = useCallback((chapterId: string, scene?: Scene) => {
     const p = projectRef.current;
     if (!p) return;
     const chapter = findChapter(p.outline, chapterId);
     if (!chapter) return;
     const id = scene?.id ?? `s_${Date.now()}`;
-    const title = scene?.title ?? "";
-    const summary = scene?.summary ?? "";
     applyOutline((o) => {
       const v = o.volumes.find((vv) => vv.chapters.some((c) => c.id === chapterId));
       const c = v?.chapters.find((cc) => cc.id === chapterId);
       if (!c) return o;
       const idx = c.scenes.findIndex((s) => s.id === id);
-      if (idx >= 0) c.scenes[idx] = { ...c.scenes[idx], title, summary };
-      else c.scenes.push({ id, title, summary });
+      if (idx >= 0) c.scenes[idx] = { ...c.scenes[idx], ...scene, id };
+      else c.scenes.push({ ...(scene ?? { id, title: "", summary: "" }), id, order: scene?.order ?? c.scenes.length });
       return o;
     });
-    void p;
   }, [applyOutline]);
 
   const deleteScene = useCallback(
@@ -1686,20 +1799,26 @@ export default function App() {
   );
 
   const moveScene = useCallback(
-    (chId: string, sceneId: string, beforeId: string | null) => {
+    (chId: string, sceneId: string, beforeId: string | null, toChapterId?: string) => {
       if (sceneId === beforeId) return;
       const p = projectRef.current;
       if (!p) return;
       pushUndo(t("移动场景"), p.outline, activeRef.current);
       applyOutline((o) => {
-        const c = allChapters(o).find((x) => x.id === chId);
-        if (!c) return o;
-        const idx = c.scenes.findIndex((s) => s.id === sceneId);
+        const from = allChapters(o).find((x) => x.id === chId);
+        const to = allChapters(o).find((x) => x.id === (toChapterId || chId));
+        if (!from || !to) return o;
+        const idx = from.scenes.findIndex((s) => s.id === sceneId);
         if (idx < 0) return o;
-        const [s] = c.scenes.splice(idx, 1);
-        const bi = beforeId ? c.scenes.findIndex((x) => x.id === beforeId) : -1;
-        if (bi >= 0) c.scenes.splice(bi, 0, s);
-        else c.scenes.push(s);
+        const [s] = from.scenes.splice(idx, 1);
+        s.chapterId = to.id;
+        const bi = beforeId ? to.scenes.findIndex((x) => x.id === beforeId) : -1;
+        if (bi >= 0) to.scenes.splice(bi, 0, s);
+        else to.scenes.push(s);
+        to.scenes.forEach((x, i) => {
+          x.order = i;
+          if (x.timeOrder === undefined) x.timeOrder = i;
+        });
         return o;
       });
     },
@@ -1746,8 +1865,18 @@ export default function App() {
 
   /* ───────── 设定 ───────── */
 
-  const saveLore = useCallback(
-    (lore: Lore) => {
+  const saveProofread = useCallback(
+    (config: ProofreadConfig) => {
+      const p = projectRef.current;
+      if (!p) return;
+      const proofread = normalizeProofread(config);
+      commit({ ...p, proofread });
+      persistJson("proofread.json", proofread);
+    },
+    [commit, persistJson],
+  );
+
+  const saveLore = useCallback(    (lore: Lore) => {
       const p = projectRef.current;
       if (!p) return;
       commit({ ...p, lore });
@@ -1765,7 +1894,7 @@ export default function App() {
       const entries = exists
         ? p.lore.entries.map((e) => (e.id === entry.id ? entry : e))
         : [...p.lore.entries, entry];
-      saveLore({ entries });
+      saveLore({ ...p.lore, entries });
       toast("设定已保存");
     },
     [saveLore, toast],
@@ -1822,14 +1951,28 @@ export default function App() {
       spineColor?: string;
       frontMatter?: string;
       backMatter?: string;
+      numbering?: NumberingRule;
+      renames?: { id: string; title: string }[];
     }) => {
       const p = projectRef.current;
       if (!p) return;
-      const meta = { ...p.meta, ...patch, updatedAt: Date.now() };
-      commit({ ...p, meta });
+      const { renames, ...metaPatch } = patch;
+      let outline = p.outline;
+      if (renames?.length) {
+        const map = new Map(renames.map((x) => [x.id, x.title]));
+        outline = {
+          volumes: outline.volumes.map((v) => ({
+            ...v,
+            chapters: v.chapters.map((c) => (map.has(c.id) ? { ...c, title: map.get(c.id)! } : c)),
+          })),
+        };
+      }
+      const meta = { ...p.meta, ...metaPatch, updatedAt: Date.now() };
+      commit({ ...p, meta, outline });
       persistJson("book.json", meta);
+      if (renames?.length) persistJson("outline.json", outline);
       await refreshBooks();
-      toast("书籍信息已更新");
+      toast(renames?.length ? "书籍信息与章节名已更新" : "书籍信息已更新");
     },
     [commit, persistJson, refreshBooks, toast],
   );
@@ -1855,6 +1998,10 @@ export default function App() {
   const pickCoverFile = useCallback(async () => {
     const p = projectRef.current;
     if (!p) return;
+    if (IS_ANDROID_APP) {
+      androidCoverRef.current?.click();
+      return;
+    }
     try {
       await saveAll(false);
       const picked = await openDialog({
@@ -1935,6 +2082,33 @@ export default function App() {
       setCoverPickerOpen(false);
       await refreshBooks();
       toast(value.mode === "default" ? "已使用默认封面" : "已使用自定义封面");
+    },
+    [commit, refreshBooks, toast],
+  );
+
+  const applyDesignedCover = useCallback(
+    async (dataUrl: string, spine: string) => {
+      const p = projectRef.current;
+      if (!p) return;
+      try {
+        const rel = await api.setCoverImage(p.path, dataUrl);
+        const data = await api.coverData(p.path, rel);
+        if (data) setCovers((c) => ({ ...c, [p.path]: data }));
+        const meta = {
+          ...p.meta,
+          cover: rel || p.meta.cover,
+          coverMode: "custom" as const,
+          spineColor: spine,
+          updatedAt: Date.now(),
+        };
+        commit({ ...p, meta });
+        await api.saveJson(p.path, "book.json", JSON.stringify(meta));
+        setCoverDesignerOpen(false);
+        await refreshBooks();
+        toast("封面已导出并写回这本书");
+      } catch (e) {
+        toast(`封面写回失败：${errText(e)}`, { warn: true });
+      }
     },
     [commit, refreshBooks, toast],
   );
@@ -2108,7 +2282,7 @@ export default function App() {
           .then((list) => setSnapshots(list))
           .catch(() => undefined);
         toast(kind === "comic" ? `《${title}》已建好，开始画吧` : `《${title}》已建好，开始写吧`);
-        if (kind !== "comic") window.setTimeout(() => editorRef.current?.focus(), 300);
+        if (kind !== "comic" && !IS_ANDROID_APP) window.setTimeout(() => editorRef.current?.focus(), 300);
       } catch (e) {
         toast(`新建失败：${errText(e)}`, { warn: true });
       }
@@ -2134,6 +2308,11 @@ export default function App() {
 
   const pickImport = useCallback(
     async (mode: "new" | "append") => {
+      if (IS_ANDROID_APP) {
+        androidImportMode.current = mode;
+        androidImportRef.current?.click();
+        return;
+      }
       try {
         const picked = await openDialog({
           multiple: false,
@@ -2148,6 +2327,34 @@ export default function App() {
         if (typeof picked !== "string") return;
         const doc = await api.readImportFile(picked);
         setImportState({ doc, mode });
+      } catch (e) {
+        toast(`读取书稿失败：${errText(e)}`, { warn: true });
+      }
+    },
+    [toast],
+  );
+
+  /** Android 系统选择器给的是 content://，Vite/WebView 读成 base64 后再交给 Rust。 */
+  const importOnAndroid = useCallback(
+    async (file: File) => {
+      const ext = (file.name.split(".").pop() ?? "").toLowerCase();
+      if (!["txt", "md", "markdown", "docx"].includes(ext)) {
+        toast("只支持 TXT、Markdown、DOCX", { warn: true });
+        return;
+      }
+      toast(`正在读取 ${file.name}…`);
+      try {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ""));
+          reader.onerror = () => reject(reader.error || new Error("读不到这个文件"));
+          reader.readAsDataURL(file);
+        });
+        const comma = dataUrl.indexOf(",");
+        if (comma < 0) throw new Error("这个文件读不出来");
+        const name = file.name.replace(/\.(docx|markdown|md|txt)$/i, "") || "导入稿";
+        const doc = await api.readImportBytes(name, ext, dataUrl.slice(comma + 1));
+        setImportState({ doc, mode: androidImportMode.current });
       } catch (e) {
         toast(`读取书稿失败：${errText(e)}`, { warn: true });
       }
@@ -2257,7 +2464,7 @@ export default function App() {
           setActiveId(firstNew);
           setView("write");
         }
-        window.setTimeout(() => editorRef.current?.focus(), 180);
+        if (!IS_ANDROID_APP) window.setTimeout(() => editorRef.current?.focus(), 180);
         toast(`已追加 ${payload.sections.length} 章`);
       } catch (e) {
         toast(`导入失败：${errText(e)}`, { warn: true });
@@ -2321,8 +2528,35 @@ export default function App() {
     async (format: string) => {
       const p = projectRef.current;
       if (!p) return;
+      if (p.meta.kind === "comic") {
+        // 漫画不是文字稿：回到画布，由漫画导出面板选当前页 / 当前话 / 整本。
+        setModal(null);
+        setView("write");
+        setComicExportSignal((n) => n + 1);
+        return;
+      }
       const ext = format;
       try {
+        if (IS_ANDROID_APP) {
+          // Android 的系统“另存为”会给白屏或返回 content://，直接落到 App 导出目录再走系统分享。
+          const fileName = `${p.meta.title || "未命名"}.${ext}`;
+          await saveAll(true);
+          const dest = await api.exportBookToApp(p.path, format, fileName);
+          setModal(null);
+          const mime =
+            format === "epub"
+              ? "application/epub+zip"
+              : format === "md"
+                ? "text/markdown"
+                : "text/plain";
+          try {
+            await shareFile(`file://${dest}`, { mimeType: mime, title: fileName });
+            toast("已生成导出文件，可在系统面板里保存或发送");
+          } catch {
+            toast("已生成导出文件；系统分享打不开，可稍后在设置里重试", { warn: true });
+          }
+          return;
+        }
         const dest = await saveDialog({
           title: "导出到…",
           defaultPath: `${p.meta.title || "未命名"}.${ext}`,
@@ -2422,6 +2656,37 @@ export default function App() {
           if (file) void importPackageFile(file);
         }}
       />
+      <input
+        ref={androidImportRef}
+        type="file"
+        accept=".txt,.md,.markdown,.docx,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.currentTarget.value = "";
+          if (file) void importOnAndroid(file);
+        }}
+      />
+      <input
+        ref={androidCoverRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.currentTarget.value = "";
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = () => {
+            const p = projectRef.current;
+            const src = String(reader.result || "");
+            if (!p || !src) return;
+            setCoverDraft({ path: p.path, src, name: file.name });
+          };
+          reader.onerror = () => toast("读不到这张图片", { warn: true });
+          reader.readAsDataURL(file);
+        }}
+      />
       {project ? (
         intro ? (
           <Suspense fallback={<div className="lazy-fallback">{t("正在翻开这本书…")}</div>}>
@@ -2467,7 +2732,13 @@ export default function App() {
             onSettings={() => openSettings()}
             onExport={() => {
               void saveAll(true);
-              setModal("export");
+              if (project.meta.kind === "comic") {
+                setView("write");
+                setModal(null);
+                setComicExportSignal((n) => n + 1);
+              } else {
+                setModal("export");
+              }
             }}
             onImport={() => void pickImport("append")}
             onTransfer={() => {
@@ -2524,6 +2795,9 @@ export default function App() {
                         embedded
                         chapterId={activeChapter.id}
                         firstChapterId={flat[0]?.id}
+                        proofread={project.proofread}
+                        onProofread={saveProofread}
+                        openExportSignal={comicExportSignal}
                       />
                     </Suspense>
                   ) : (
@@ -2540,6 +2814,9 @@ export default function App() {
                     todayAdded={todayAdded}
                     focusMode={focus}
                     apiRef={editorRef}
+                    proofread={project.proofread}
+                    onProofread={saveProofread}
+                    onFootnotes={(next) => updateFootnotes(activeChapter.id, next)}
                     onBody={() => {
                       // 正文先留在编辑器里，等 1.4 秒自动保存时再整章落盘。
                       // 每次按键都 setProject 会触发整棵工作台重渲染和大纲重算，长文明显卡顿。
@@ -2575,6 +2852,7 @@ export default function App() {
                 <OutlineBoard
                   bookPath={project.path}
                   outline={project.outline}
+                  lore={project.lore}
                   activeId={activeId}
                   onOpen={selectChapter}
                   onSummary={updateSummary}
@@ -2585,6 +2863,11 @@ export default function App() {
                   onDeleteChapter={deleteChapter}
                   onRenameVolume={renameVolume}
                   onDeleteVolume={deleteVolume}
+                  onAddScene={(chId) => setSceneEdit({ chapterId: chId, sceneId: null })}
+                  onEditScene={(chId, sceneId) => setSceneEdit({ chapterId: chId, sceneId })}
+                  onMoveScene={(chId, sceneId, toChapterId, beforeId) =>
+                    moveScene(chId, sceneId, beforeId, toChapterId)
+                  }
                 />
               )}
 
@@ -2622,6 +2905,7 @@ export default function App() {
                 todayAdded={todayAdded}
                 totalChapters={flat.length}
                 snapshots={snapshots}
+                onClose={() => setPanel(false)}
                 onOpenSnapshots={() => {
                   void loadSnapshots(project.path);
                   setModal("snapshots");
@@ -2783,7 +3067,21 @@ export default function App() {
           customCoverUrl={rawCoverUrl}
           onClose={() => setCoverPickerOpen(false)}
           onApply={applyCoverOptions}
+          onOpenDesigner={() => {
+            setCoverPickerOpen(false);
+            setCoverDesignerOpen(true);
+          }}
           onPickFile={chooseCoverFile}
+        />
+      )}
+
+      {coverDesignerOpen && project && (
+        <CoverDesignerDialog
+          title={project.meta.title}
+          author={project.meta.author}
+          spineColor={project.meta.spineColor || "#6d4a2a"}
+          onClose={() => setCoverDesignerOpen(false)}
+          onApply={applyDesignedCover}
         />
       )}
 
@@ -2803,6 +3101,7 @@ export default function App() {
       {metaDialog && project && (
         <BookMetaDialog
           meta={project.meta}
+          outline={project.outline}
           onClose={() => setMetaDialog(false)}
           onSave={(patch) => saveBookMeta(patch)}
         />
@@ -2821,6 +3120,7 @@ export default function App() {
           meta={project.meta}
           chapters={flat.length}
           words={bookWords}
+          kind={project.meta.kind === "comic" ? "comic" : "novel"}
           onClose={closeModal}
           onExport={doExport}
           onPrint={(f) => {
@@ -2939,6 +3239,8 @@ export default function App() {
         <SceneEditorDialog
           chapter={findChapter(project.outline, sceneEdit.chapterId) ?? null}
           sceneId={sceneEdit.sceneId}
+          lore={project.lore}
+          chapters={flat}
           onClose={() => setSceneEdit(null)}
           onSave={(scene) => {
             addScene(sceneEdit.chapterId, scene);
