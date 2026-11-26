@@ -200,6 +200,7 @@ struct TransferSession {
     sample_at: Arc<AtomicI64>,
     final_speed: Arc<AtomicU64>,
     zip_path: Mutex<Option<PathBuf>>,
+    app_data: Mutex<Option<String>>,
     error: Mutex<Option<String>>,
     app: AppHandle,
     server: Arc<Server>,
@@ -810,8 +811,16 @@ fn build_package(session: &TransferSession) -> Result<(PathBuf, u64, usize, usiz
     });
     zip.start_file("sync-plan.json", options)
         .map_err(|e| format!("写入同步计划失败：{e}"))?;
-    zip.write_all(serde_json::to_string(&plan).unwrap().as_bytes())
+    zip.write_all(&serde_json::to_string(&plan).unwrap().as_bytes())
         .map_err(|e| format!("写入同步计划失败：{e}"))?;
+    // 全站改动（打卡日历、主题、语言、编辑器偏好等）随书稿一起走，
+    // 不再只同步正文。导入方会在写入后把这份数据交给界面层恢复。
+    if let Some(app_data) = session.app_data.lock().unwrap().clone() {
+        zip.start_file("sync-app.json", options)
+            .map_err(|e| format!("写入全站数据失败：{e}"))?;
+        zip.write_all(app_data.as_bytes())
+            .map_err(|e| format!("写入全站数据失败：{e}"))?;
+    }
     zip.finish().map_err(|e| format!("收尾同步包失败：{e}"))?;
     let size = fs::metadata(&temp).map(|m| m.len()).unwrap_or(0);
     Ok((temp, size, changed.len(), source.files.len()))
@@ -846,9 +855,14 @@ pub fn import_chapterpack(data: String) -> Result<String, String> {
     let temp = std::env::temp_dir().join(format!("chapterpack-{}.zip", now_ms()));
     fs::write(&temp, &bytes).map_err(|e| format!("写入临时同步包失败：{e}"))?;
     let applied = apply_package(None, &temp);
+    let app_data = read_app_data(&temp);
     let _ = fs::remove_file(&temp);
     let (dest, _) = applied?;
-    Ok(dest.to_string_lossy().into_owned())
+    Ok(serde_json::json!({
+        "path": dest.to_string_lossy(),
+        "appData": app_data,
+    })
+    .to_string())
 }
 
 fn apply_package(
@@ -911,7 +925,11 @@ fn apply_package(
             return Err("同步包里有不安全的路径".into());
         };
         let rel = name.to_string_lossy().replace('\\', "/");
-        if rel == BOOK_FILE || rel == "sync-manifest.json" || rel == "sync-plan.json" {
+        if rel == BOOK_FILE
+            || rel == "sync-manifest.json"
+            || rel == "sync-plan.json"
+            || rel == "sync-app.json"
+        {
             continue;
         }
         validate_rel_path(&rel)?;
@@ -930,6 +948,18 @@ fn apply_package(
     ensure_project(&dest)?;
     let manifest = build_manifest(Some(&dest))?;
     Ok((dest, manifest))
+}
+
+fn read_app_data(package: &Path) -> Option<String> {
+    let mut archive = ZipArchive::new(File::open(package).ok()?).ok()?;
+    let mut entry = archive.by_name("sync-app.json").ok()?;
+    let mut text = String::new();
+    entry.read_to_string(&mut text).ok()?;
+    let value: Value = serde_json::from_str(&text).ok()?;
+    if value.get("entries").and_then(|v| v.as_object()).is_none() {
+        return None;
+    }
+    Some(text)
 }
 
 /* ───────────────────────── HTTP 服务 ───────────────────────── */
@@ -1297,6 +1327,7 @@ fn handle_upload(session: &Arc<TransferSession>, mut req: Request) {
     session.set_phase("applying");
     let book = session.book_path.lock().unwrap().clone();
     let applied = apply_package(book.as_deref(), &temp);
+    let app_data = read_app_data(&temp);
     let _ = fs::remove_file(&temp);
     match applied {
         Ok((dest, manifest)) => {
@@ -1310,11 +1341,19 @@ fn handle_upload(session: &Arc<TransferSession>, mut req: Request) {
             }
             session.set_phase("done");
             let path = dest.to_string_lossy().to_string();
-            let _ = session.app.emit("transfer-applied", json!({ "path": path }));
+            let _ = session.app.emit(
+                "transfer-applied",
+                json!({ "path": path, "appData": app_data }),
+            );
             respond_json(
                 req,
                 200,
-                json!({ "ok": true, "path": path, "title": session.pc_manifest.lock().unwrap().title }),
+                json!({
+                    "ok": true,
+                    "path": path,
+                    "title": session.pc_manifest.lock().unwrap().title,
+                    "appData": app_data
+                }),
             );
         }
         Err(error) => {
@@ -1450,13 +1489,31 @@ getState();let autoPairTried=false;setInterval(()=>{getState();if(!autoPairTried
 /* ───────────────────────── Tauri 命令 ───────────────────────── */
 
 #[tauri::command]
-pub fn transfer_start(app: AppHandle, book_path: Option<String>) -> Result<TransferSnapshot, String> {
+pub fn transfer_start(
+    app: AppHandle,
+    book_path: Option<String>,
+    app_data: Option<String>,
+) -> Result<TransferSnapshot, String> {
     stop_session();
     let book = book_path
         .filter(|p| !p.trim().is_empty())
         .map(PathBuf::from)
         .filter(|p| p.is_dir());
     let manifest = build_manifest(book.as_deref())?;
+    let app_data = match app_data {
+        Some(text) if !text.trim().is_empty() => {
+            if text.len() > 2 * 1024 * 1024 {
+                return Err("全站数据超过 2 MB，已拒绝".into());
+            }
+            let value: Value =
+                serde_json::from_str(&text).map_err(|e| format!("全站数据不是合法 JSON：{e}"))?;
+            if value.get("entries").and_then(|v| v.as_object()).is_none() {
+                return Err("全站数据缺少 entries".into());
+            }
+            Some(text)
+        }
+        _ => None,
+    };
     let token = token();
     let server = Arc::new(
         Server::http("0.0.0.0:0").map_err(|e| format!("开启互传服务失败：{e}"))?,
@@ -1484,6 +1541,7 @@ pub fn transfer_start(app: AppHandle, book_path: Option<String>) -> Result<Trans
         sample_at: Arc::new(AtomicI64::new(0)),
         final_speed: Arc::new(AtomicU64::new(0)),
         zip_path: Mutex::new(None),
+        app_data: Mutex::new(app_data),
         error: Mutex::new(None),
         app: app.clone(),
         server: server.clone(),

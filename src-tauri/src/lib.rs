@@ -4772,6 +4772,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_sharekit::init())
+        .plugin(tauri_plugin_stt::init())
         .setup(|app| {
             use tauri::Manager;
             // Android 的 Documents 不可写；书库与配置统一落在 App 私有目录。

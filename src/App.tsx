@@ -1,7 +1,7 @@
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
 import { shareFile } from "@choochmeque/tauri-plugin-sharekit-api";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
@@ -64,6 +64,7 @@ import { normalizeProofread } from "./lib/proofread";
 import { formatChapterTitle, normalizeNumbering } from "./lib/numbering";
 import { ensureUiPack, setUiLanguage, t, tf } from "./lib/i18n";
 import { useProximityGlow } from "./lib/glow";
+import { readVoiceMarks } from "./lib/voice";
 import { Splash } from "./components/Splash";
 import { AmbientBackdrop, type AmbienceScene } from "./components/AmbientBackdrop";
 import { Welcome } from "./components/Welcome";
@@ -95,6 +96,8 @@ import { CoverCropDialog } from "./components/CoverCropDialog";
 import { CoverDesignerDialog } from "./components/CoverDesignerDialog";
 import { CoverPickerDialog } from "./components/CoverPickerDialog";
 import { TransferDialog } from "./components/TransferDialog";
+import { QrScanner } from "./components/QrScanner";
+import { applyAppData } from "./lib/appdata";
 
 const PrintStudio = lazy(() =>
   import("./components/PrintStudio").then((m) => ({ default: m.PrintStudio })),
@@ -360,6 +363,8 @@ export default function App() {
   const [bgPath, setBgPath] = useState(readLS("chapter.bg", ""));
   const [bgData, setBgData] = useState("");
   const [mcpEnabled, setMcpEnabled] = useState(readLS("chapter.mcp", "off") === "on");
+  const [voicePad, setVoicePadState] = useState(readLS("chapter.voicePad", "on") !== "off");
+  const [voiceMarks, setVoiceMarksState] = useState(() => readVoiceMarks(readLS("chapter.voiceMarks", "")));
   const [dailyLog, setDailyLog] = useState<Record<string, number>>(() => {
     try {
       const parsed = JSON.parse(readLS("chapter.daily", "{}")) as Record<string, number>;
@@ -368,6 +373,30 @@ export default function App() {
       return {};
     }
   });
+
+  // 互传导入的全站数据已经写进 localStorage，这里再把界面状态同步过来，
+  // 打卡日历、主题、语言不用重启就能看到。
+  useEffect(() => {
+    const onAppData = (event: Event) => {
+      const entries = (event as CustomEvent<Record<string, string>>).detail;
+      if (!entries) return;
+      const daily = entries["chapter.daily"];
+      if (daily) {
+        try {
+          const parsed = JSON.parse(daily) as Record<string, number>;
+          if (parsed && typeof parsed === "object") setDailyLog(parsed);
+        } catch {
+          /* 数据坏了就保留原样 */
+        }
+      }
+      const theme = entries["chapter.theme"];
+      if (theme === "light" || theme === "dark" || theme === "system") setThemeMode(theme);
+      const lang = entries["chapter.lang"];
+      if (lang) setLanguage(lang as UiLanguage);
+    };
+    window.addEventListener("chapter:appdata", onAppData);
+    return () => window.removeEventListener("chapter:appdata", onAppData);
+  }, []);
   const [importState, setImportState] = useState<{
     doc: ImportDoc;
     mode: "new" | "append";
@@ -447,6 +476,14 @@ export default function App() {
   const [coverDesignerOpen, setCoverDesignerOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferBookPath, setTransferBookPath] = useState<string | null>(null);
+  const [scanOpen, setScanOpen] = useState(false);
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem("chapter.scan.pending") === "1") setScanOpen(true);
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const [toasts, setToasts] = useState<
     { id: number; text: string; warn?: boolean; leaving?: boolean; action?: { label: string; run: () => void } }[]
@@ -606,6 +643,24 @@ export default function App() {
     },
     [],
   );
+
+  const setVoicePad = useCallback((on: boolean) => {
+    setVoicePadState(on);
+    try {
+      localStorage.setItem("chapter.voicePad", on ? "on" : "off");
+    } catch {
+      /* 本地存储不可用时只影响本次会话 */
+    }
+  }, []);
+
+  const setVoiceMarks = useCallback((marks: string[]) => {
+    setVoiceMarksState(marks);
+    try {
+      localStorage.setItem("chapter.voiceMarks", JSON.stringify(marks));
+    } catch {
+      /* 同上 */
+    }
+  }, []);
 
   const commit = useCallback((next: Project) => {
     projectRef.current = next;
@@ -1130,7 +1185,15 @@ export default function App() {
         });
         const comma = dataUrl.indexOf(",");
         if (comma < 0) throw new Error("这个文件不是同步包");
-        const path = await api.importChapterpack(dataUrl.slice(comma + 1));
+        const raw = await api.importChapterpack(dataUrl.slice(comma + 1));
+        let path = raw;
+        try {
+          const parsed = JSON.parse(raw) as { path?: string; appData?: string | null };
+          if (parsed.path) path = parsed.path;
+          if (parsed.appData) applyAppData(parsed.appData);
+        } catch {
+          /* 兼容旧版只返回路径 */
+        }
         await refreshBooks();
         toast("同步包已导入", {
           action: { label: "打开", run: () => void openProject(path, { skipSave: true }) },
@@ -2816,6 +2879,8 @@ export default function App() {
                     apiRef={editorRef}
                     proofread={project.proofread}
                     onProofread={saveProofread}
+                    voicePad={voicePad}
+                    voiceMarks={voiceMarks}
                     onFootnotes={(next) => updateFootnotes(activeChapter.id, next)}
                     onBody={() => {
                       // 正文先留在编辑器里，等 1.4 秒自动保存时再整章落盘。
@@ -2966,6 +3031,7 @@ export default function App() {
             setTransferBookPath(null);
             setTransferOpen(true);
           }}
+          onScan={() => setScanOpen(true)}
           onOpenFolder={openExisting}
           onSettings={() => openSettings()}
           onToggleTheme={toggleTheme}
@@ -2987,6 +3053,7 @@ export default function App() {
             setTransferBookPath(null);
             setTransferOpen(true);
           }}
+          onScan={() => setScanOpen(true)}
           onOpenFolder={openExisting}
           onRename={(b) => {
             setPrompt({
@@ -3156,6 +3223,8 @@ export default function App() {
             dailyGoal={project?.meta.dailyGoal}
             mcpEnabled={mcpEnabled}
             projectPath={project?.path ?? null}
+            voicePad={voicePad}
+            voiceMarks={voiceMarks}
             onTheme={setThemeMode}
             onMotion={setMotion}
             onHomeMode={setHomeMode}
@@ -3168,6 +3237,8 @@ export default function App() {
             onSaveGoals={saveGoals}
             onChangeLibrary={changeLibrary}
             onMcpEnabled={setMcpEnabled}
+            onVoicePad={setVoicePad}
+            onVoiceMarks={setVoiceMarks}
             onReloadProject={() => reloadFromDisk()}
             onSaveCurrent={() => saveAll(true)}
             onClose={() => setModal(null)}
@@ -3248,13 +3319,28 @@ export default function App() {
           }}
         />
       )}
+      {scanOpen && (
+        <QrScanner
+          onClose={() => setScanOpen(false)}
+          onResult={(url) => {
+            setScanOpen(false);
+            if (!/^https?:\/\//i.test(url)) {
+              toast("这个二维码不是 Chapter 的配对地址", { warn: true });
+              return;
+            }
+            void openUrl(url).catch((e) => toast(`打不开配对页：${errText(e)}`, { warn: true }));
+          }}
+        />
+      )}
       {transferOpen && (
         <TransferDialog
           bookPath={transferBookPath}
           outline={project?.outline ?? null}
           onClose={() => setTransferOpen(false)}
-          onApplied={(path) => {
+          onScan={() => setScanOpen(true)}
+          onApplied={(path, appData) => {
             setTransferOpen(false);
+            if (appData) applyAppData(appData);
             void openProject(path, { skipSave: true });
             void refreshBooks();
           }}

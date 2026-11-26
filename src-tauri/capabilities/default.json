@@ -14,6 +14,7 @@
     "core:window:allow-is-maximized",
     "dialog:default",
     "opener:default",
-    "sharekit:default"
+    "sharekit:default",
+    "stt:default"
   ]
 }

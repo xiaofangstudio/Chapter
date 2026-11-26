@@ -17,12 +17,20 @@ import { ACCENTS, LANGUAGES } from "../types";
 import { t } from "../lib/i18n";
 import { api, errText } from "../lib/api";
 import { readScanRules, writeScanRules } from "../lib/split";
+import { DEFAULT_VOICE_MARKS, VOICE_MARKS } from "../lib/voice";
 import { Icon } from "./Icon";
 import { LanguagePicker } from "./LanguagePicker";
 import { Logo } from "./Logo";
 import { TreasureCard, TreasureChest } from "./TreasureChest";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import {
+  installModel,
+  listModels,
+  onDownloadProgress,
+  setActiveModel,
+  type WhisperModelInfo,
+} from "tauri-plugin-stt-api";
 
 const MCP_PORT = 18765;
 const GIT_URL = "https://git-scm.com/download/win";
@@ -48,6 +56,10 @@ export interface SettingsDialogProps {
   dailyGoal?: number;
   mcpEnabled: boolean;
   projectPath?: string | null;
+  voicePad: boolean;
+  voiceMarks: string[];
+  onVoicePad: (v: boolean) => void;
+  onVoiceMarks: (v: string[]) => void;
   onTheme: (v: ThemeMode) => void;
   onAccent: (v: AccentTheme) => void;
   onMotion: (v: MotionMode) => void;
@@ -657,6 +669,10 @@ export function SettingsDialog(props: SettingsDialogProps) {
     };
   });
   const [scanSaved, setScanSaved] = useState(false);
+  const [voiceModels, setVoiceModels] = useState<WhisperModelInfo[]>([]);
+  const [voiceActiveId, setVoiceActiveId] = useState<string | null>(null);
+  const [voiceDownload, setVoiceDownload] = useState<{ id: string; progress: number } | null>(null);
+  const [voiceError, setVoiceError] = useState("");
   const [closing, setClosing] = useState(false);
   const closeTimer = useRef<number | undefined>(undefined);
   const requestClose = useCallback(() => {
@@ -694,6 +710,82 @@ export function SettingsDialog(props: SettingsDialogProps) {
     });
     setScanSaved(true);
     window.setTimeout(() => setScanSaved(false), 1600);
+  };
+
+  const loadVoiceModels = useCallback(async () => {
+    if (isPhone) return;
+    try {
+      const catalog = await listModels(false);
+      setVoiceModels(
+        catalog.models.filter(
+          (m) => !m.advanced && !m.language && (m.id === "tiny" || m.id === "base" || m.id === "small"),
+        ),
+      );
+      setVoiceActiveId(catalog.active ?? null);
+      setVoiceError("");
+    } catch (e) {
+      setVoiceError(errText(e));
+    }
+  }, [isPhone]);
+
+  useEffect(() => {
+    if (isPhone) return;
+    void loadVoiceModels();
+    let alive = true;
+    let unlisten: (() => void) | undefined;
+    onDownloadProgress((event) => {
+      if (event.status === "downloading" && event.modelId) {
+        setVoiceDownload({ id: event.modelId, progress: event.progress ?? 0 });
+        return;
+      }
+      setVoiceDownload(null);
+      void loadVoiceModels();
+    })
+      .then((fn) => {
+        if (alive) unlisten = fn;
+        else fn();
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, [isPhone, loadVoiceModels]);
+
+  const downloadVoiceModel = async (id: string) => {
+    if (voiceDownload) return;
+    setVoiceDownload({ id, progress: 0 });
+    setVoiceError("");
+    try {
+      await installModel(id);
+      await setActiveModel(id);
+      await loadVoiceModels();
+    } catch (e) {
+      setVoiceError(errText(e));
+    } finally {
+      setVoiceDownload(null);
+    }
+  };
+
+  const useVoiceModel = async (id: string) => {
+    setVoiceError("");
+    try {
+      await setActiveModel(id);
+      await loadVoiceModels();
+    } catch (e) {
+      setVoiceError(errText(e));
+    }
+  };
+
+  const toggleVoiceMark = (mark: string) => {
+    const on = props.voiceMarks.includes(mark);
+    if (on) {
+      if (props.voiceMarks.length <= 2) return;
+      props.onVoiceMarks(props.voiceMarks.filter((m) => m !== mark));
+      return;
+    }
+    if (props.voiceMarks.length >= 7) return;
+    props.onVoiceMarks([...props.voiceMarks, mark]);
   };
 
   return (
@@ -803,6 +895,93 @@ export function SettingsDialog(props: SettingsDialogProps) {
                     </div>
                   </Row>
                 </div>
+
+                {isPhone && (
+                  <div className="set-group set-voice-mobile">
+                    <div className="set-subhead">
+                      <h3>{t("手机语音与标点")}</h3>
+                      <em className="set-inline-note">{t("仅手机显示")}</em>
+                    </div>
+                    <p className="set-note">
+                      {t("语音转写直接落在光标处；底部只留一排 44px 标点键，不铺满空白，也不挡正文。电脑端直接用键盘。")}
+                    </p>
+                    <Row label="标点条" note="写作时贴在格式坞上方，只占一排">
+                      <Switch on={props.voicePad} onClick={() => props.onVoicePad(!props.voicePad)} label={t("手机标点条")} />
+                    </Row>
+                    {props.voicePad && (
+                      <>
+                        <div className="voice-mark-pick" role="group" aria-label={t("选择常用标点")}>
+                          {VOICE_MARKS.map((mark) => (
+                            <button
+                              key={mark}
+                              type="button"
+                              className={`voice-mark-chip${props.voiceMarks.includes(mark) ? " on" : ""}`}
+                              aria-pressed={props.voiceMarks.includes(mark)}
+                              onClick={() => toggleVoiceMark(mark)}
+                            >
+                              {mark}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="set-actions">
+                          <span className="set-hint">{props.voiceMarks.length} / 7 · {t("点一下选中或取消")}</span>
+                          <button className="btn btn-ghost btn-xs" onClick={() => props.onVoiceMarks(DEFAULT_VOICE_MARKS)}>
+                            {t("恢复默认")}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {!isPhone && (
+                  <div className="set-group set-voice-desktop">
+                    <div className="set-subhead">
+                      <h3>{t("桌面语音包")}</h3>
+                      <em className="set-inline-note">{t("本地离线")}</em>
+                    </div>
+                    <p className="set-note">
+                      {t("录音在本机转写，正文不出这台电脑。装好语音包后，点编辑器顶部的麦克风说话，再点一次落字。")}
+                    </p>
+                    <div className="set-voice-models">
+                      {voiceModels.map((model) => {
+                        const busy = voiceDownload?.id === model.id;
+                        const active = voiceActiveId === model.id;
+                        const label = model.id === "tiny" ? t("小号") : model.id === "base" ? t("标准") : t("高精度");
+                        return (
+                          <div key={model.id} className={`set-voice-model${active ? " on" : ""}`}>
+                            <span>
+                              <b>{label}<i>{model.sizeMb} MB</i></b>
+                              <em>
+                                {model.id === "tiny"
+                                  ? t("最快，中文精度一般")
+                                  : model.id === "base"
+                                    ? t("轻量，够听清大概")
+                                    : t("更准，转写更慢一些")}
+                              </em>
+                            </span>
+                            {busy ? (
+                              <strong className="set-voice-model-btn busy">{voiceDownload?.progress ?? 0}%</strong>
+                            ) : active ? (
+                              <strong className="set-voice-model-btn on">{t("使用中")}</strong>
+                            ) : model.installed ? (
+                              <button className="btn btn-outline btn-xs" onClick={() => void useVoiceModel(model.id)}>{t("启用")}</button>
+                            ) : (
+                              <button className="btn btn-outline btn-xs" onClick={() => void downloadVoiceModel(model.id)}>{t("下载")}</button>
+                            )}
+                          </div>
+                        );
+                      })}
+                      {!voiceModels.length && !voiceError && <span className="set-hint">{t("正在读取语音包…")}</span>}
+                    </div>
+                    {voiceDownload && (
+                      <div className="voice-progress" aria-label={t("下载进度")}>
+                        <i style={{ width: `${voiceDownload.progress}%` }} />
+                      </div>
+                    )}
+                    {voiceError && <p className="set-note" style={{ color: "var(--danger, #b2493e)" }}>{voiceError}</p>}
+                  </div>
+                )}
 
                 {props.targetWords !== undefined && (
                   <div className="set-group">

@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import QRCode from "qrcode";
 import type { Outline, TransferComparison, TransferItem, TransferSnapshot } from "../types";
 import { api, errText } from "../lib/api";
+import { collectAppData } from "../lib/appdata";
 import { t } from "../lib/i18n";
 import { Icon } from "./Icon";
 
@@ -10,7 +11,8 @@ interface Props {
   bookPath: string | null;
   outline?: Outline | null;
   onClose: () => void;
-  onApplied: (path: string) => void;
+  onScan: () => void;
+  onApplied: (path: string, appData?: string | null) => void;
 }
 
 function fmtBytes(n: number): string {
@@ -91,7 +93,7 @@ function countText(c: TransferComparison, direction: "pc_to_phone" | "phone_to_p
   return { count: c.changedPhoneToPc, bytes: c.changedBytesPhoneToPc };
 }
 
-export function TransferDialog({ bookPath, outline = null, onClose, onApplied }: Props) {
+export function TransferDialog({ bookPath, outline = null, onClose, onScan, onApplied }: Props) {
   const [snap, setSnap] = useState<TransferSnapshot | null>(null);
   const [qr, setQr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -108,7 +110,7 @@ export function TransferDialog({ bookPath, outline = null, onClose, onApplied }:
     let unlistenApplied: (() => void) | undefined;
     (async () => {
       try {
-        let first = await api.transferStart(bookPath);
+        let first = await api.transferStart(bookPath, collectAppData());
         if (!alive.current) return;
         // 手机上默认是手机 → 电脑；电脑端打开时保持电脑 → 手机。
         if (isPhone && first.direction === "pc_to_phone") {
@@ -124,11 +126,11 @@ export function TransferDialog({ bookPath, outline = null, onClose, onApplied }:
         unlisten = await listen<TransferSnapshot>("transfer-update", (event) => {
           if (alive.current) setSnap(event.payload);
         });
-        unlistenApplied = await listen<{ path: string }>("transfer-applied", (event) => {
+        unlistenApplied = await listen<{ path: string; appData?: string | null }>("transfer-applied", (event) => {
           if (!alive.current) return;
           const path = event.payload?.path;
           if (path) {
-            callbacks.current.onApplied(path);
+            callbacks.current.onApplied(path, event.payload?.appData ?? null);
             callbacks.current.onClose();
           }
         });
@@ -276,10 +278,13 @@ export function TransferDialog({ bookPath, outline = null, onClose, onApplied }:
             <h3>{snap ? (isPhone ? phonePhaseTitle(snap) : phaseTitle(snap)) : "手机互传"}</h3>
             <p>
               {isPhone
-                ? "同一个 Wi-Fi，用电脑浏览器扫码连上这台手机；先选方向，再只传有变化的内容。"
-                : "同一个 Wi-Fi，书稿不经过云端。先绑定手机，再由电脑确认方向；只传有变化的内容。"}
+                ? "同一个 Wi-Fi。用右上角的扫码键扫电脑二维码，或让电脑浏览器扫这里的码；书稿、漫画、打卡日历和界面改动一起同步。"
+                : "同一个 Wi-Fi，书稿不经过云端。先绑定手机，再由电脑确认方向；小说、漫画、打卡日历与偏好一起传。"}
             </p>
           </div>
+          <button className="icon-btn" onClick={onScan} title="扫码">
+            <Icon name="qr" size={17} />
+          </button>
           <button className="icon-btn" onClick={doClose} title={locked ? "传输中不能退出" : "关闭"}>
             <Icon name="close" size={16} />
           </button>
@@ -432,8 +437,8 @@ export function TransferDialog({ bookPath, outline = null, onClose, onApplied }:
                           </b>
                         </div>
                         <div>
-                          <span>不参与同步</span>
-                          <b>主题 / 语言 / 窗口 / 界面设置</b>
+                          <span>一起同步</span>
+                          <b>正文 / 漫画 / 打卡日历 / 界面偏好</b>
                         </div>
                       </div>
 

@@ -1,10 +1,29 @@
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, MutableRefObject } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import {
+  checkPermission,
+  installModel,
+  isAvailable,
+  listModels,
+  onDownloadProgress,
+  onError,
+  onResult,
+  onStateChange,
+  setActiveModel,
+  startListening,
+  stopListening,
+} from "tauri-plugin-stt-api";
+import type {
+  DownloadProgressEvent,
+  RecognitionResult,
+  SttError,
+  WhisperModelInfo,
+} from "tauri-plugin-stt-api";
 import type { BookMeta, Chapter, ProofreadConfig, ProofreadIssue } from "../types";
 import { countWords, countWordsChunked, escapeHtml, fmtNumber, fmtTime, fmtWords, htmlToMd, mdToHtml } from "../lib/text";
 import { t, tf } from "../lib/i18n";
-import { api } from "../lib/api";
+import { api, errText } from "../lib/api";
 import { recallScroll, rememberScroll } from "../lib/viewMemory";
 import {
   addIgnore,
@@ -84,6 +103,8 @@ interface Props {
   focusMode: boolean;
   proofread: ProofreadConfig;
   onProofread: (config: ProofreadConfig) => void;
+  voicePad: boolean;
+  voiceMarks: string[];
   onFootnotes: (footnotes: import("../types").Footnote[]) => void;
   onBody: (md: string) => void;
   onTitle: (title: string) => void;
@@ -105,6 +126,8 @@ export function Editor({
   focusMode,
   proofread,
   onProofread,
+  voicePad,
+  voiceMarks,
   onFootnotes,
   onBody,
   onTitle,
@@ -163,6 +186,26 @@ export function Editor({
   const composingRef = useRef(false);
   proofConfigRef.current = proofread;
   proofIssuesRef.current = issues;
+
+  const isPhone = typeof window !== "undefined" && window.matchMedia("(max-width: 820px)").matches;
+  const [voiceActive, setVoiceActive] = useState(false);
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const [voiceStopping, setVoiceStopping] = useState(false);
+  const [voiceSeconds, setVoiceSeconds] = useState(0);
+  const [voiceNotice, setVoiceNotice] = useState<{ text: string; warn?: boolean } | null>(null);
+  const [voiceSetup, setVoiceSetup] = useState<{ models: WhisperModelInfo[] } | null>(null);
+  const [voiceDownload, setVoiceDownload] = useState<{ id: string; progress: number; status: string } | null>(null);
+  const voiceActiveRef = useRef(false);
+  const voiceBusyRef = useRef(false);
+  const voiceStoppingRef = useRef(false);
+  const voiceStartedAt = useRef(0);
+  const voicePreviewRef = useRef<HTMLSpanElement | null>(null);
+  const voiceAnchorRef = useRef<HTMLSpanElement | null>(null);
+  const voiceRangeRef = useRef<Range | null>(null);
+  const voiceNoticeTimer = useRef<number | undefined>(undefined);
+  const voiceHandlerRef = useRef<(result: RecognitionResult) => void>(() => undefined);
+  const voiceErrorRef = useRef<(error: SttError) => void>(() => undefined);
+  const voiceStateRef = useRef<(state: "idle" | "listening" | "processing") => void>(() => undefined);
 
   const choice = FONT_OPTIONS.find((f) => f.id === fontChoice);
   const fontStack =
@@ -357,7 +400,12 @@ export function Editor({
   const syncNow = (notify: boolean) => {
     const el = bodyRef.current;
     if (!el) return lastMd.current;
-    const md = htmlToMd(el);
+    // 语音的临时光标 / 预览只属于屏幕，绝不能写进正文存档。
+    const clean = el.cloneNode(true) as HTMLElement;
+    clean.querySelectorAll(".voice-anchor, .voice-ghost").forEach((node) => node.remove());
+    // 语音多次落字可能留下相邻文本节点，合并后再转 Markdown，避免被拆成多个段落。
+    clean.normalize();
+    const md = htmlToMd(clean);
     lastMd.current = md;
     lastWords.current = countWords(md);
     if (notify) onBodyRef.current(md);
@@ -427,6 +475,10 @@ export function Editor({
       const sel = window.getSelection();
       const el = bodyRef.current;
       if (!sel || !el || !sel.anchorNode) return;
+      if (sel.rangeCount > 0) {
+        const range = sel.getRangeAt(0);
+        if (el.contains(range.startContainer)) voiceRangeRef.current = range.cloneRange();
+      }
       const anchor =
         sel.anchorNode.nodeType === Node.TEXT_NODE
           ? sel.anchorNode.parentElement
@@ -609,6 +661,515 @@ export function Editor({
     else run("formatBlock", "blockquote");
   };
 
+  const showVoiceNotice = (text: string, warn = false) => {
+    window.clearTimeout(voiceNoticeTimer.current);
+    setVoiceNotice({ text, warn });
+    voiceNoticeTimer.current = window.setTimeout(() => setVoiceNotice(null), warn ? 5200 : 2800);
+  };
+
+  /** 语音落点：优先当前可见光标，其次点麦克风前的最后光标。 */
+  const voiceCaretRange = (): Range | null => {
+    const el = bodyRef.current;
+    if (!el) return null;
+    const sel = window.getSelection();
+    if (sel && sel.rangeCount > 0 && sel.anchorNode && el.contains(sel.anchorNode)) {
+      const range = sel.getRangeAt(0);
+      if (el.contains(range.startContainer)) return range.cloneRange();
+    }
+    const saved = voiceRangeRef.current;
+    if (saved && el.contains(saved.startContainer) && el.contains(saved.endContainer)) {
+      return saved.cloneRange();
+    }
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    return range;
+  };
+
+  /** 手机听写时点正文换落点：只移动选区，不重新拉起输入法键盘。 */
+  const voicePointRange = (x: number, y: number): Range | null => {
+    const el = bodyRef.current;
+    const doc = document as Document & {
+      caretRangeFromPoint?: (x: number, y: number) => Range | null;
+      caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+    };
+    let range = doc.caretRangeFromPoint?.(x, y) ?? null;
+    if (!range) {
+      const pos = doc.caretPositionFromPoint?.(x, y);
+      if (pos) {
+        range = document.createRange();
+        range.setStart(pos.offsetNode, pos.offset);
+        range.collapse(true);
+      }
+    }
+    if (!range || !el?.contains(range.startContainer)) return null;
+    return range;
+  };
+
+  const clearVoiceAnchor = () => {
+    const anchor = voiceAnchorRef.current;
+    voiceAnchorRef.current = null;
+    if (anchor?.isConnected) anchor.remove();
+  };
+
+  /** 手机收着键盘时也能看见“下一句从哪落”：一条不占字数的细光标。 */
+  const moveVoiceAnchor = (range: Range) => {
+    clearVoiceAnchor();
+    const anchor = document.createElement("span");
+    anchor.className = "voice-anchor";
+    anchor.setAttribute("contenteditable", "false");
+    anchor.setAttribute("aria-hidden", "true");
+    const insert = range.cloneRange();
+    insert.collapse(true);
+    insert.insertNode(anchor);
+    const after = document.createRange();
+    after.setStartAfter(anchor);
+    after.collapse(true);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(after);
+    voiceRangeRef.current = after.cloneRange();
+    voiceAnchorRef.current = anchor;
+  };
+
+  /** 把语音文字并进光标所在的文本节点，避免每次落字都新开一个段落。 */
+  const insertVoiceText = (range: Range, text: string): Range => {
+    const caret = document.createRange();
+    const putIn = (node: Text, offset: number) => {
+      node.insertData(offset, text);
+      caret.setStart(node, offset + text.length);
+      caret.collapse(true);
+    };
+    if (range.startContainer.nodeType === Node.TEXT_NODE) {
+      putIn(range.startContainer as Text, range.startOffset);
+      return caret;
+    }
+    const host = range.startContainer as Element;
+    const offset = range.startOffset;
+    let next = offset < host.childNodes.length ? host.childNodes[offset] : null;
+    let prev = offset > 0 ? host.childNodes[offset - 1] : null;
+    if (next?.nodeType === Node.ELEMENT_NODE && (next as Element).classList.contains("voice-anchor")) {
+      next = next.nextSibling;
+    }
+    if (prev?.nodeType === Node.ELEMENT_NODE && (prev as Element).classList.contains("voice-anchor")) {
+      prev = prev.previousSibling;
+    }
+    if (next?.nodeType === Node.TEXT_NODE) {
+      putIn(next as Text, 0);
+      return caret;
+    }
+    if (prev?.nodeType === Node.TEXT_NODE) {
+      const node = prev as Text;
+      putIn(node, node.textContent?.length ?? 0);
+      return caret;
+    }
+    if (prev) {
+      const walker = document.createTreeWalker(prev, NodeFilter.SHOW_TEXT);
+      let last: Text | null = null;
+      while (walker.nextNode()) last = walker.currentNode as Text;
+      if (last) {
+        putIn(last, last.textContent?.length ?? 0);
+        return caret;
+      }
+    }
+    const node = document.createTextNode(text);
+    range.insertNode(node);
+    caret.setStartAfter(node);
+    caret.collapse(true);
+    return caret;
+  };
+
+  const setCaretAt = (range: Range) => {
+    const sel = window.getSelection();
+    if (!sel) return;
+    const next = range.cloneRange();
+    sel.removeAllRanges();
+    sel.addRange(next);
+    voiceRangeRef.current = next.cloneRange();
+  };
+
+  const reanchorAt = (range: Range) => {
+    if (!isPhone || !voiceActiveRef.current) return;
+    moveVoiceAnchor(range);
+  };
+
+  const setCaretAfter = (node: Node) => {
+    const sel = window.getSelection();
+    if (!sel) return;
+    const range = document.createRange();
+    range.setStartAfter(node);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+    voiceRangeRef.current = range.cloneRange();
+  };
+
+  /** 手机连续听写时，每次落字/标点后重新插回光标线，下一段仍看得见落点。 */
+  const reanchorAfter = (node: Node) => {
+    if (!isPhone || !voiceActiveRef.current) return;
+    const range = document.createRange();
+    range.setStartAfter(node);
+    range.collapse(true);
+    moveVoiceAnchor(range);
+  };
+
+  const dropVoicePreview = (withInput: boolean) => {
+    const span = voicePreviewRef.current;
+    voicePreviewRef.current = null;
+    if (!span?.isConnected) {
+      clearVoiceAnchor();
+      return;
+    }
+    const text = span.textContent ?? "";
+    if (text) {
+      const node = document.createTextNode(text);
+      span.replaceWith(node);
+      clearVoiceAnchor();
+      setCaretAfter(node);
+    } else {
+      span.remove();
+      clearVoiceAnchor();
+    }
+    if (withInput) {
+      setEmpty(false);
+      handleInput();
+    }
+  };
+
+  const updateVoicePreview = (text: string) => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const span = voicePreviewRef.current;
+    if (span?.isConnected) {
+      span.textContent = text;
+      setEmpty(false);
+      return;
+    }
+    const range = voiceCaretRange();
+    if (!range) return;
+    range.deleteContents();
+    const next = document.createElement("span");
+    next.className = "voice-ghost";
+    next.setAttribute("contenteditable", "false");
+    next.textContent = text;
+    range.insertNode(next);
+    voicePreviewRef.current = next;
+    setCaretAfter(next);
+    setEmpty(false);
+  };
+
+  const insertVoiceFinal = (text: string) => {
+    const clean = text.trim();
+    if (!clean) {
+      dropVoicePreview(true);
+      return;
+    }
+    const span = voicePreviewRef.current;
+    if (span?.isConnected) {
+      const node = document.createTextNode(clean);
+      span.replaceWith(node);
+      voicePreviewRef.current = null;
+      clearVoiceAnchor();
+      setCaretAfter(node);
+      reanchorAfter(node);
+      setEmpty(false);
+      handleInput();
+      return;
+    }
+    const range = voiceCaretRange();
+    if (!range) return;
+    range.deleteContents();
+    const caret = insertVoiceText(range, clean);
+    clearVoiceAnchor();
+    setCaretAt(caret);
+    reanchorAt(caret);
+    setEmpty(false);
+    handleInput();
+  };
+
+  const insertVoiceMark = (mark: string) => {
+    dropVoicePreview(true);
+    const range = voiceCaretRange();
+    if (!range) return;
+    range.deleteContents();
+    const caret = insertVoiceText(range, mark);
+    clearVoiceAnchor();
+    setCaretAt(caret);
+    reanchorAt(caret);
+    setEmpty(false);
+    handleInput();
+  };
+
+  const insertVoiceBreak = () => {
+    dropVoicePreview(true);
+    const range = voiceCaretRange();
+    if (!range) return;
+    range.deleteContents();
+    const br = document.createElement("br");
+    range.insertNode(br);
+    setCaretAfter(br);
+    reanchorAfter(br);
+    setEmpty(false);
+    handleInput();
+    bodyRef.current?.blur();
+  };
+
+  const deleteVoiceBefore = () => {
+    if (voicePreviewRef.current) dropVoicePreview(true);
+    const anchor = voiceAnchorRef.current;
+    const range = voiceCaretRange();
+    if (!range) return;
+    if (!range.collapsed) {
+      range.deleteContents();
+    } else {
+      const node = range.startContainer;
+      const offset = range.startOffset;
+      let target: Text | null = null;
+      let cut = 0;
+      if (node.nodeType === Node.TEXT_NODE) {
+        if (offset > 0) {
+          target = node as Text;
+          cut = offset - 1;
+        } else {
+          // 光标线插在文末时会留下一个空文本节点，往前跳过光标线再删。
+          let prev: ChildNode | null = node.previousSibling;
+          if (prev === anchor) prev = anchor?.previousSibling ?? null;
+          if (prev?.nodeType === Node.TEXT_NODE && prev.textContent) {
+            target = prev as Text;
+            cut = prev.textContent.length - 1;
+          }
+        }
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        let prev: ChildNode | null = (node as Element).childNodes[offset - 1] ?? null;
+        if (prev === anchor) prev = anchor?.previousSibling ?? null;
+        if (prev?.nodeType === Node.TEXT_NODE && prev.textContent) {
+          target = prev as Text;
+          cut = prev.textContent.length - 1;
+        } else if (prev) {
+          prev.remove();
+        }
+      }
+      if (target) target.deleteData(cut, 1);
+    }
+    clearVoiceAnchor();
+    if (isPhone && voiceActiveRef.current) {
+      range.collapse(true);
+      moveVoiceAnchor(range);
+    }
+    setEmpty(false);
+    handleInput();
+    bodyRef.current?.blur();
+  };
+
+  const beginVoice = async () => {
+    if (voiceBusyRef.current || voiceActiveRef.current) return;
+    voiceBusyRef.current = true;
+    setVoiceBusy(true);
+    try {
+      const availability = await isAvailable();
+      if (!availability.available) {
+        const catalog = await listModels(false);
+        const installed = catalog.models.filter((m) => m.installed);
+        if (installed.length > 0) {
+          // 已装多个模型时，沿用它当前选中的那个；没有标记才退到推荐/最小。
+          const current = installed.find((m) => m.id === catalog.active);
+          await setActiveModel((current ?? installed.find((m) => m.recommended) ?? installed[0]).id);
+        } else if (catalog.models.length > 0) {
+          const useful = catalog.models.filter(
+            (m) => !m.advanced && !m.language && (m.id === "tiny" || m.id === "base" || m.id === "small"),
+          );
+          setVoiceSetup({ models: useful.length ? useful : catalog.models.filter((m) => !m.advanced) });
+          showVoiceNotice("先装一个本地语音包，之后完全离线。");
+          return;
+        } else {
+          showVoiceNotice(availability.reason || "这台设备的系统语音识别不可用。", true);
+          return;
+        }
+      }
+
+      const permission = await checkPermission();
+      const listenConfig = {
+        language: "zh-CN",
+        interimResults: true,
+        continuous: true,
+        maxDuration: 180000,
+      };
+      if (permission.microphone !== "granted") {
+        if (isPhone) {
+          // 第一次先让系统弹授权；授权完成后用户再点一次麦克风即可。
+          try {
+            await startListening(listenConfig);
+          } catch {
+            /* Kotlin 在弹窗后立即 reject，这里只关心系统授权框已经出现 */
+          }
+          showVoiceNotice("第一次用要允许麦克风。点「允许」后，再点一次麦克风。", true);
+          return;
+        }
+      }
+
+      const saved = voiceCaretRange();
+      if (saved) {
+        voiceRangeRef.current = saved;
+        moveVoiceAnchor(saved);
+      }
+      // 手机端先收键盘，避免输入法与语音转写抢同一个插入点。
+      if (isPhone) (document.activeElement as HTMLElement | null)?.blur();
+      await startListening(listenConfig);
+      voiceStartedAt.current = Date.now();
+      voiceActiveRef.current = true;
+      voiceStoppingRef.current = false;
+      setVoiceActive(true);
+      setVoiceStopping(false);
+      setVoiceSeconds(0);
+      showVoiceNotice(isPhone ? "正在听。点正文换落点，再点麦克风结束。" : "正在录音，说完再点一次麦克风落字。");
+    } catch (e) {
+      dropVoicePreview(true);
+      showVoiceNotice(`语音没开起来：${errText(e)}`, true);
+    } finally {
+      voiceBusyRef.current = false;
+      setVoiceBusy(false);
+    }
+  };
+
+  const endVoice = async () => {
+    if (!voiceActiveRef.current || voiceStoppingRef.current) return;
+    voiceStoppingRef.current = true;
+    setVoiceStopping(true);
+    try {
+      await stopListening();
+    } catch (e) {
+      voiceActiveRef.current = false;
+      voiceStoppingRef.current = false;
+      setVoiceActive(false);
+      setVoiceStopping(false);
+      dropVoicePreview(true);
+      showVoiceNotice(`没能收尾：${errText(e)}`, true);
+    }
+  };
+
+  const toggleVoice = () => {
+    if (voiceActiveRef.current) void endVoice();
+    else void beginVoice();
+  };
+
+  const installVoicePack = async (id: string) => {
+    setVoiceDownload({ id, progress: 0, status: "downloading" });
+    try {
+      await installModel(id);
+      await setActiveModel(id);
+      setVoiceDownload({ id, progress: 100, status: "complete" });
+      setVoiceSetup(null);
+      showVoiceNotice("语音包已装好，再点麦克风就能听写。");
+    } catch (e) {
+      setVoiceDownload({ id, progress: 0, status: "error" });
+      showVoiceNotice(`语音包没装上：${errText(e)}`, true);
+    }
+  };
+
+  voiceHandlerRef.current = (result: RecognitionResult) => {
+    const text = (result.transcript ?? "").trim();
+    if (!result.isFinal) {
+      if (text) updateVoicePreview(text);
+      return;
+    }
+    if (text) insertVoiceFinal(text);
+    else dropVoicePreview(true);
+    if (voiceStoppingRef.current) {
+      voiceActiveRef.current = false;
+      voiceStoppingRef.current = false;
+      setVoiceActive(false);
+      setVoiceStopping(false);
+    }
+  };
+
+  voiceErrorRef.current = (error: SttError) => {
+    const keep = error.code === "NO_SPEECH";
+    if (!keep) {
+      voiceActiveRef.current = false;
+      voiceStoppingRef.current = false;
+      setVoiceActive(false);
+      setVoiceStopping(false);
+      dropVoicePreview(true);
+    }
+    const map: Record<string, string> = {
+      NO_SPEECH: "没听清，再说一遍。",
+      NOT_AVAILABLE: "这台设备没有系统语音服务。",
+      PERMISSION_DENIED: "没有麦克风权限，去系统设置里放行。",
+      SPEECH_PERMISSION_DENIED: "语音识别权限被拒绝。",
+      NETWORK_ERROR: "语音服务需要网络，当前连不上。",
+      AUDIO_ERROR: "麦克风被别的程序占着。",
+      ALREADY_LISTENING: "已经在听了。",
+      CANCELLED: "这次收听已取消。",
+      TIMEOUT: "长时间没听到声音，已停下。",
+      BUSY: "语音服务正忙，稍后再试。",
+    };
+    showVoiceNotice(map[error.code] || error.message || "语音识别出错。", true);
+  };
+
+  voiceStateRef.current = (state) => {
+    if (state === "listening") {
+      voiceActiveRef.current = true;
+      setVoiceActive(true);
+      return;
+    }
+    if (state === "idle" && voiceActiveRef.current) {
+      dropVoicePreview(true);
+      voiceActiveRef.current = false;
+      voiceStoppingRef.current = false;
+      setVoiceActive(false);
+      setVoiceStopping(false);
+    }
+  };
+
+  useEffect(() => {
+    let alive = true;
+    const unlisteners: Array<() => void> = [];
+    const keep = (p: Promise<() => void>) => {
+      void p.then((fn) => {
+        if (alive) unlisteners.push(fn);
+        else fn();
+      });
+    };
+    keep(onResult((result) => voiceHandlerRef.current(result)));
+    keep(onError((error) => voiceErrorRef.current(error)));
+    keep(onStateChange((event) => voiceStateRef.current(event.state)));
+    return () => {
+      alive = false;
+      unlisteners.forEach((fn) => fn());
+      window.clearTimeout(voiceNoticeTimer.current);
+      if (voiceActiveRef.current) void stopListening().catch(() => undefined);
+    };
+    // 语音事件只注册一次，回调走 ref，避免每次输入重挂监听。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!voiceActive) return;
+    const timer = window.setInterval(() => {
+      setVoiceSeconds(Math.floor((Date.now() - voiceStartedAt.current) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [voiceActive]);
+
+  useEffect(() => {
+    if (!voiceSetup) return;
+    let unlisten: (() => void) | undefined;
+    void onDownloadProgress((event: DownloadProgressEvent) => {
+      if (!event.modelId) return;
+      setVoiceDownload((prev) => {
+        if (!prev || prev.id !== event.modelId) return prev;
+        return {
+          id: prev.id,
+          progress: event.status === "complete" ? 100 : Math.round(event.progress ?? prev.progress),
+          status: event.status,
+        };
+      });
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => unlisten?.();
+  }, [voiceSetup]);
+
   const onPaste = (e: React.ClipboardEvent) => {
     e.preventDefault();
     const text = e.clipboardData.getData("text/plain");
@@ -704,6 +1265,26 @@ export function Editor({
             <Icon name="book" size={15} />
             <span>{t("脚注")}</span>
             {(chapter.footnotes?.length ?? 0) > 0 && <b className="proof-count">{chapter.footnotes!.length}</b>}
+          </button>
+          <button
+            className={`tbtn voice-btn${voiceActive ? " on" : ""}${voiceStopping ? " is-stopping" : ""}`}
+            title={voiceActive ? t("停止语音并落字") : t("语音输入")}
+            aria-pressed={voiceActive}
+            disabled={voiceBusy}
+            onMouseDown={(e) => e.preventDefault()}
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={toggleVoice}
+          >
+            <Icon name="mic" size={15} />
+            <span>
+              {voiceBusy
+                ? t("准备…")
+                : voiceStopping
+                  ? t("转写…")
+                  : voiceActive
+                    ? `${Math.floor(voiceSeconds / 60)}:${String(voiceSeconds % 60).padStart(2, "0")}`
+                    : t("语音")}
+            </span>
           </button>
         </div>
         <span className="grow" />
@@ -812,14 +1393,27 @@ export function Editor({
             <div
               ref={bodyRef}
               className="body"
-              contentEditable
+              contentEditable={!(isPhone && voiceActive)}
               role="textbox"
               aria-multiline="true"
               suppressContentEditableWarning
               spellCheck={false}
               style={{ fontFamily: fontStack }}
               onInput={handleInput}
+              onPointerDown={(e) => {
+                // 边听边换落点：把上一段预览落成正文，后面的字从新光标开始。
+                if (voicePreviewRef.current) dropVoicePreview(true);
+                if (voiceActiveRef.current && isPhone) {
+                  e.preventDefault();
+                  const range = voicePointRange(e.clientX, e.clientY);
+                  if (range) {
+                    moveVoiceAnchor(range);
+                    (document.activeElement as HTMLElement | null)?.blur();
+                  }
+                }
+              }}
               onClick={(e) => {
+                if (voiceActiveRef.current) return;
                 const target = e.target as HTMLElement;
                 if (target.closest(".fn-ref")) {
                   setFnOpen(true);
@@ -856,6 +1450,50 @@ export function Editor({
         </article>
       </div>
 
+      {isPhone && voicePad && voiceActive && (
+        <div className={`voice-pad${voiceActive ? " is-listening" : ""}`} role="toolbar" aria-label={t("常用标点")}>
+          {voiceMarks.map((mark) => (
+            <button
+              key={mark}
+              type="button"
+              className="voice-pad-key"
+              onMouseDown={(e) => e.preventDefault()}
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => insertVoiceMark(mark)}
+            >
+              {mark}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="voice-pad-key voice-pad-action"
+            aria-label={t("换行")}
+            onMouseDown={(e) => e.preventDefault()}
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={insertVoiceBreak}
+          >
+            ↵
+          </button>
+          <button
+            type="button"
+            className="voice-pad-key voice-pad-action"
+            aria-label={t("退格")}
+            onMouseDown={(e) => e.preventDefault()}
+            onPointerDown={(e) => e.preventDefault()}
+            onClick={deleteVoiceBefore}
+          >
+            ⌫
+          </button>
+        </div>
+      )}
+
+      {voiceNotice && (
+        <div className={`voice-notice${voiceNotice.warn ? " warn" : ""}`} role="status">
+          <span className={voiceActive ? "voice-live-dot" : ""} />
+          {voiceNotice.text}
+        </div>
+      )}
+
       <footer className="statusbar">
         <span className="status-chip">
           {t("本章")} <b>{fmtNumber(words)}</b> {t("字")}
@@ -872,6 +1510,70 @@ export function Editor({
         <span className="grow" />
         <span style={{ color: "var(--text-4)" }}>Ctrl+S {t("保存")}</span>
       </footer>
+
+      {voiceSetup && (
+        <div className="voice-setup-layer" onMouseDown={(e) => e.target === e.currentTarget && !voiceDownload && setVoiceSetup(null)}>
+          <div className="voice-setup-card" role="dialog" aria-modal="true" aria-label={t("本地语音包")}>
+            <header>
+              <div>
+                <b>{t("先装一个本地语音包")}</b>
+                <em>{t("桌面端本地转写，正文不出这台电脑。装好后再点麦克风。")}</em>
+              </div>
+              <button
+                className="icon-btn"
+                aria-label={t("关闭")}
+                disabled={voiceDownload?.status === "downloading"}
+                onClick={() => setVoiceSetup(null)}
+              >
+                <Icon name="close" size={15} />
+              </button>
+            </header>
+            <div className="voice-model-list">
+              {voiceSetup.models.map((model) => {
+                const downloading = voiceDownload?.id === model.id && voiceDownload.status === "downloading";
+                const done = voiceDownload?.id === model.id && voiceDownload.status === "complete";
+                return (
+                  <button
+                    key={model.id}
+                    className={`voice-model${model.id === "base" ? " recommended" : ""}`}
+                    disabled={Boolean(voiceDownload && voiceDownload.status === "downloading")}
+                    onClick={() => void installVoicePack(model.id)}
+                  >
+                    <span>
+                      <b>
+                        {model.id === "tiny" ? t("小号") : model.id === "base" ? t("标准") : t("高精度")}
+                        <i>{model.sizeMb} MB</i>
+                      </b>
+                      <em>
+                        {model.id === "tiny"
+                          ? t("最快，适合旧电脑；中文精度一般。")
+                          : model.id === "base"
+                            ? t("中文听写够用，下载 142 MB。")
+                            : t("更准，但更吃内存和等待时间。")}
+                      </em>
+                    </span>
+                    <strong>{done ? t("已装好") : downloading ? `${voiceDownload?.progress ?? 0}%` : t("下载")}</strong>
+                  </button>
+                );
+              })}
+            </div>
+            {voiceDownload?.status === "downloading" && (
+              <div className="voice-progress" aria-label={t("下载进度")}>
+                <i style={{ width: `${voiceDownload.progress}%` }} />
+              </div>
+            )}
+            {voiceDownload?.status === "error" && (
+              <p className="voice-setup-err">{t("下载失败，检查网络后再点一次。")}</p>
+            )}
+            <footer>
+              <span>{t("只下一次；模型存在 App 数据目录，卸载 Chapter 才会清掉。")}</span>
+              <button className="btn btn-ghost" disabled={voiceDownload?.status === "downloading"} onClick={() => setVoiceSetup(null)}>
+                {t("先不装")}
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
 
       {draftOpen && (
         <aside className="draft-drawer" aria-label={t("草稿箱")}>

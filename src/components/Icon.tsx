@@ -36,7 +36,9 @@ export type IconName =
   | "type"
   | "download"
   | "refresh"
-  | "search";
+  | "search"
+  | "mic"
+  | "qr";
 
 const paths: Record<IconName, ReactNode> = {
   plus: <><path d="M12 5v14" /><path d="M5 12h14" /></>,
@@ -221,6 +223,21 @@ const paths: Record<IconName, ReactNode> = {
     <>
       <circle cx="10.5" cy="10.5" r="5.5" />
       <path d="m15 15 4.5 4.5" />
+    </>
+  ),
+  mic: (
+    <>
+      <rect x="9" y="3.5" width="6" height="10.5" rx="3" />
+      <path d="M5.8 11.5a6.2 6.2 0 0 0 12.4 0" />
+      <path d="M12 17.7V21M8.8 21h6.4" />
+    </>
+  ),
+  qr: (
+    <>
+      <rect x="3.5" y="3.5" width="6" height="6" rx="1" />
+      <rect x="14.5" y="3.5" width="6" height="6" rx="1" />
+      <rect x="3.5" y="14.5" width="6" height="6" rx="1" />
+      <path d="M14.5 14.5h2.5v2.5h-2.5zM19 19h1.5v1.5H19zM14.5 19h1.5M20.5 14.5V17" />
     </>
   ),
 };

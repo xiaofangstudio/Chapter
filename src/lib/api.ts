@@ -129,8 +129,8 @@ export const api = {
     invoke<GitStatus>("git_create_branch", { path, name }),
   gitSwitchBranch: (path: string, name: string) =>
     invoke<RawProject>("git_switch_branch", { path, name }),
-  transferStart: (bookPath: string | null) =>
-    invoke<TransferSnapshot>("transfer_start", { bookPath }),
+  transferStart: (bookPath: string | null, appData?: string | null) =>
+    invoke<TransferSnapshot>("transfer_start", { bookPath, appData: appData ?? null }),
   transferStatus: () => invoke<TransferSnapshot>("transfer_status"),
   transferDirection: (direction: "pc_to_phone" | "phone_to_pc") =>
     invoke<TransferSnapshot>("transfer_direction", { direction }),

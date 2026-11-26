@@ -21,6 +21,7 @@ interface Props {
   onImport: () => void;
   onOpenFolder: () => void;
   onTransfer: () => void;
+  onScan: () => void;
   onSettings: () => void;
   onToggleTheme: () => void;
   onMinimal: () => void;
@@ -161,6 +162,7 @@ export function WorkspaceHome({
   onImport,
   onOpenFolder,
   onTransfer,
+  onScan,
   onSettings,
   onToggleTheme,
   onMinimal,
@@ -1291,6 +1293,9 @@ which === "home" ? (
         </nav>
 
         <div className="wb-rail-mobile-actions">
+          <button type="button" className="wb-rail-item" onClick={onScan} title={t("扫码")} aria-label={t("扫码")}>
+            <Icon name="qr" size={18} />
+          </button>
           <button type="button" className="wb-rail-item" onClick={onTransfer} title={t("手机互传")} aria-label={t("手机互传")}>
             <Icon name="download" size={17} />
           </button>
