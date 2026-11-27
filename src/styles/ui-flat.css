@@ -148,7 +148,7 @@
 /* ───────── 手机作品页：番茄作家助手式层级 ───────── */
 @media (max-width: 820px) {
   .book-intro {
-    --intro-top-pad: max(env(safe-area-inset-top, 0px), 24px);
+    --intro-top-pad: var(--safe-top);
     scrollbar-gutter: auto;
     background: var(--bg);
     overscroll-behavior-y: contain;
@@ -160,10 +160,10 @@
     position: sticky;
     top: 0;
     z-index: 30;
-    height: calc(52px + var(--intro-top-pad));
-    min-height: calc(52px + var(--intro-top-pad));
+    height: calc(56px + var(--intro-top-pad));
+    min-height: calc(56px + var(--intro-top-pad));
     gap: 4px;
-    padding: var(--intro-top-pad) 8px 0;
+    padding: var(--intro-top-pad) 8px 0 6px;
     background: var(--surface);
     border-bottom: 0;
   }
@@ -177,8 +177,8 @@
   }
 
   .intro-back {
-    width: 42px;
-    height: 42px;
+    width: 44px;
+    height: 44px;
   }
 
   .intro-more-btn {
@@ -205,12 +205,7 @@
     gap: 16px;
     margin: 0 -12px 14px;
     padding: 18px 20px 30px;
-    background: linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--accent) 8%, var(--surface)) 0%,
-      color-mix(in srgb, var(--accent) 4%, var(--bg)) 72%,
-      var(--bg) 100%
-    );
+    background: var(--surface);
     border-radius: 0 0 20px 20px;
     animation: mHeroIn 460ms var(--ease-out) both;
   }
@@ -399,7 +394,7 @@
   /* 卷选择条吸附在顶栏下方；滚动后书的基础信息从它上方接上去，两者是一个控件、无分隔线。 */
   .intro-m-sticky {
     position: sticky;
-    top: calc(52px + var(--intro-top-pad));
+    top: calc(56px + var(--intro-top-pad));
     z-index: 24;
     margin: 0 -18px;
     padding: 0 18px 2px;

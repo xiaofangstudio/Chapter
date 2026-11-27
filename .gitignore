@@ -38,3 +38,5 @@ ui.xml
 .tools/
 
 /flat-*.png
+/_*.png
+/intro-cover.png
