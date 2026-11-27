@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { t } from "../lib/i18n";
 import { Icon } from "./Icon";
 import { Modal } from "./Modals";
+import { CoverPaintStudio } from "./coverpaint/CoverPaintStudio";
 
 type Template = "solid" | "image" | "block" | "wordmark";
 type Fit = "cover" | "contain";
@@ -47,6 +48,7 @@ export function CoverDesignerDialog({
   const [focalY, setFocalY] = useState(50);
   const [zoom, setZoom] = useState(1);
   const [busy, setBusy] = useState(false);
+  const [paintOpen, setPaintOpen] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -249,6 +251,13 @@ export function CoverDesignerDialog({
             <Icon name="image" size={13} />
             {image ? t("换一张图") : t("上传封面图")}
           </button>
+          <button className="btn btn-primary cover-design-paint" onClick={() => setPaintOpen(true)}>
+            <Icon name="edit" size={13} />
+            {t("自己画封面")}
+          </button>
+          <p className="cover-design-paint-note">
+            {t("进画室先选 PNG 位图或 SVG 矢量：PNG 推荐，功能全；SVG 更清晰但限制多。")}
+          </p>
           {(template === "image" || template === "block") && image && (
             <div className="cover-design-focus">
               <label>
@@ -283,6 +292,16 @@ export function CoverDesignerDialog({
           </div>
         </div>
       </div>
+      {paintOpen && (
+        <CoverPaintStudio
+          title={bookTitle || title}
+          author={writer || author}
+          onClose={() => setPaintOpen(false)}
+          onApply={async (dataUrl) => {
+            await onApply(dataUrl, spine);
+          }}
+        />
+      )}
     </Modal>
   );
 }

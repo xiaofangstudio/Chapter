@@ -1157,6 +1157,94 @@ export function getUiLanguage(): UiLanguage {
   return current;
 }
 
+const LOCALE_TAGS: Partial<Record<UiLanguage, string>> = {
+  zh: "zh-CN",
+  zhTW: "zh-Hant-TW",
+  en: "en-US",
+  ja: "ja-JP",
+  ko: "ko-KR",
+  fr: "fr-FR",
+  de: "de-DE",
+  es: "es-ES",
+  pt: "pt-PT",
+  ru: "ru-RU",
+  ar: "ar-SA",
+  it: "it-IT",
+  nl: "nl-NL",
+  tr: "tr-TR",
+  pl: "pl-PL",
+  uk: "uk-UA",
+  sv: "sv-SE",
+  da: "da-DK",
+  fi: "fi-FI",
+  cs: "cs-CZ",
+  el: "el-GR",
+  he: "he-IL",
+  hi: "hi-IN",
+  vi: "vi-VN",
+  id: "id-ID",
+  th: "th-TH",
+  fa: "fa-IR",
+  ro: "ro-RO",
+  hu: "hu-HU",
+  bg: "bg-BG",
+  sr: "sr-RS",
+  hr: "hr-HR",
+  sk: "sk-SK",
+  sl: "sl-SI",
+  lt: "lt-LT",
+  lv: "lv-LV",
+  et: "et-EE",
+  ca: "ca-ES",
+  nb: "nb-NO",
+  ms: "ms-MY",
+  fil: "fil-PH",
+  bn: "bn-BD",
+  ur: "ur-PK",
+  ta: "ta-IN",
+  te: "te-IN",
+  mr: "mr-IN",
+  sw: "sw-KE",
+  af: "af-ZA",
+  sq: "sq-AL",
+  mk: "mk-MK",
+  hy: "hy-AM",
+  az: "az-AZ",
+  kk: "kk-KZ",
+  bo: "bo-CN",
+  ug: "ug-CN",
+  mn: "mn-MN",
+  za: "za-CN",
+};
+
+const dateFormatters = new Map<string, Intl.DateTimeFormat>();
+
+/** 按当前界面语言格式化完整日期时间；中文输出「2026年11月25日 23:36」。 */
+export function fmtDateTime(value: number | string | Date): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  const tag = LOCALE_TAGS[current] ?? current;
+  let formatter = dateFormatters.get(tag);
+  if (!formatter) {
+    try {
+      formatter = new Intl.DateTimeFormat(tag, {
+        calendar: "gregory",
+        dateStyle: "medium",
+        timeStyle: "short",
+        hour12: false,
+      });
+    } catch {
+      formatter = new Intl.DateTimeFormat("en-US", {
+        dateStyle: "medium",
+        timeStyle: "short",
+        hour12: false,
+      });
+    }
+    dateFormatters.set(tag, formatter);
+  }
+  return formatter.format(date);
+}
+
 export function t(text: string): string {
   if (current === "zh") return text;
   return packs[current]?.[text] ?? packs.en[text] ?? text;

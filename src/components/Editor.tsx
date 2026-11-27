@@ -20,9 +20,9 @@ import type {
   SttError,
   WhisperModelInfo,
 } from "tauri-plugin-stt-api";
-import type { BookMeta, Chapter, ProofreadConfig, ProofreadIssue } from "../types";
+import type { BookMeta, Chapter, ProofreadConfig, ProofreadIssue, SaveState } from "../types";
 import { countWords, countWordsChunked, escapeHtml, fmtNumber, fmtTime, fmtWords, htmlToMd, mdToHtml } from "../lib/text";
-import { t, tf } from "../lib/i18n";
+import { fmtDateTime, t, tf } from "../lib/i18n";
 import { api, errText } from "../lib/api";
 import { recallScroll, rememberScroll } from "../lib/viewMemory";
 import {
@@ -98,6 +98,8 @@ interface Props {
   bookPath: string;
   index: number;
   total: number;
+  volumeTitle?: string;
+  saveState?: SaveState;
   bookWords: number;
   todayAdded: number;
   focusMode: boolean;
@@ -121,6 +123,8 @@ export function Editor({
   bookPath,
   index,
   total,
+  volumeTitle,
+  saveState = "saved",
   bookWords,
   todayAdded,
   focusMode,
@@ -163,6 +167,7 @@ export function Editor({
   });
   const [fontChoice, setFontChoice] = useState<FontChoice>(readFontChoice);
   const [fontOpen, setFontOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [fontErr, setFontErr] = useState("");
   const [customName, setCustomName] = useState(() => {
     try {
@@ -1190,10 +1195,17 @@ export function Editor({
 
   const goalPct =
     meta.targetWords > 0 ? Math.min(100, Math.round((bookWords / meta.targetWords) * 100)) : 0;
+  const saveLabel =
+    saveState === "saving" ? t("保存中") : saveState === "dirty" ? t("未保存") : t("已保存");
 
   return (
     <>
-      <div className="editor-toolbar">
+      <div className={`editor-toolbar${toolsOpen ? " mobile-open" : ""}`}>
+        {isPhone && (
+          <button className="tbtn editor-sheet-close" title={t("完成")} onClick={() => setToolsOpen(false)}>
+            <Icon name="close" size={16} />
+          </button>
+        )}
         <div className="tb-group">
           <button
             className={`tbtn${fmt.bold ? " on" : ""}`}
@@ -1359,6 +1371,19 @@ export function Editor({
 
       <div className="paper-scroll" ref={scrollRef}>
         <article className="paper" style={{ "--editor-font": `${fontSize}px` } as CSSProperties}>
+          {isPhone && (
+            <div className={`editor-mobile-meta save-${saveState}`}>
+              <span className="editor-mobile-volume">
+                {volumeTitle || tf("第 {index} / {total} 章", { index: index + 1, total })}
+              </span>
+              <span className="editor-mobile-facts">
+                <i />
+                <b>{saveLabel}</b>
+                <em>|</em>
+                <span>{fmtNumber(words)} {t("字")}</span>
+              </span>
+            </div>
+          )}
           <input
             className={`ch-title${title.length > 18 ? " is-long" : ""}`}
             ref={titleRef}
@@ -1384,10 +1409,14 @@ export function Editor({
             <span>
               {tf("第 {index} / {total} 章", { index: index + 1, total })}
             </span>
+            {!isPhone && (
+              <>
+                <span className="dot" />
+                <span>{tf("{count} 个场景", { count: chapter.scenes.length })}</span>
+              </>
+            )}
             <span className="dot" />
-            <span>{tf("{count} 个场景", { count: chapter.scenes.length })}</span>
-            <span className="dot" />
-            <span>{tf("更新于 {time}", { time: fmtTime(chapter.updatedAt) })}</span>
+            <span>{t("上次更新")} {fmtDateTime(chapter.updatedAt)}</span>
           </div>
           <div className="body-wrap">
             <div
@@ -1492,6 +1521,17 @@ export function Editor({
           <span className={voiceActive ? "voice-live-dot" : ""} />
           {voiceNotice.text}
         </div>
+      )}
+
+      {isPhone && (
+        <button
+          className={`editor-tools-fab${toolsOpen ? " on" : ""}`}
+          title={t("写作")}
+          aria-label={t("写作")}
+          onClick={() => setToolsOpen((v) => !v)}
+        >
+          <Icon name="type" size={17} />
+        </button>
       )}
 
       <footer className="statusbar">

@@ -12,8 +12,9 @@ import type {
   PaperTexture,
   ThemeMode,
   UiLanguage,
+  UiStyle,
 } from "../types";
-import { ACCENTS, LANGUAGES } from "../types";
+import { ACCENTS, LANGUAGES, UI_STYLES } from "../types";
 import { t } from "../lib/i18n";
 import { api, errText } from "../lib/api";
 import { readScanRules, writeScanRules } from "../lib/split";
@@ -45,6 +46,7 @@ export interface SettingsDialogProps {
   initialSection?: "appearance" | "writing" | "ai" | "git" | "about";
   themeMode: ThemeMode;
   accent: AccentTheme;
+  uiStyle: UiStyle;
   motion: MotionMode;
   lightEffect: LightEffect;
   homeMode: HomeMode;
@@ -62,6 +64,7 @@ export interface SettingsDialogProps {
   onVoiceMarks: (v: string[]) => void;
   onTheme: (v: ThemeMode) => void;
   onAccent: (v: AccentTheme) => void;
+  onUiStyle: (v: UiStyle) => void;
   onMotion: (v: MotionMode) => void;
   onLightEffect: (v: LightEffect) => void;
   onHomeMode: (v: HomeMode) => void;
@@ -831,6 +834,9 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 </div>
 
                 <div className="set-group">
+                  <Row label="界面风格" note={UI_STYLES.find((s) => s.key === props.uiStyle)?.note || "选一套顺眼的界面"} >
+                    <Seg value={props.uiStyle} options={UI_STYLES} onChange={props.onUiStyle} />
+                  </Row>
                   <Row label="首页" note="进入 Chapter 时先看到哪种首页">
                     <Seg value={props.homeMode} options={[{ key: "minimal", label: "极简" }, { key: "workspace", label: "工作台" }]} onChange={props.onHomeMode} />
                   </Row>

@@ -21,6 +21,7 @@
     "@tauri-apps/plugin-opener": "^2.7.0",
     "jsqr": "^1.4.0",
     "pinyin-pro": "^3.29.5",
+    "polygon-clipping": "^0.15.7",
     "qrcode": "^1.5.4",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",

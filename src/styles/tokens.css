@@ -171,6 +171,91 @@
   --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.55);
 }
 
+/* ---------- 扁平化：近白分层，颜色只作点缀 ---------- */
+[data-ui="flat"] {
+  --font-serif: var(--font-ui);
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 12px;
+  --r-xl: 14px;
+  --r-2xl: 16px;
+  --r-cover: 6px;
+  --shadow-xs: 0 1px 1px rgba(24, 28, 24, 0.03);
+  --shadow-sm: 0 1px 4px rgba(24, 28, 24, 0.05);
+  --shadow-md: 0 10px 28px rgba(24, 28, 24, 0.07);
+  --shadow-lg: 0 22px 56px rgba(24, 28, 24, 0.12);
+}
+
+[data-ui="flat"][data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f4f5;
+  --surface: #ffffff;
+  --surface-2: #f6f7f8;
+  --surface-3: #eceef0;
+  --border: #e4e6e8;
+  --border-strong: #cfd3d7;
+  --text: #1c1d20;
+  --text-2: #5e6268;
+  --text-3: #8c9096;
+  --text-4: #b4b7bc;
+  --hover: rgba(20, 22, 26, 0.05);
+  --pressed: rgba(20, 22, 26, 0.09);
+  --danger: #c2483d;
+  --danger-soft: rgba(194, 72, 61, 0.09);
+  --paper: #ffffff;
+  --paper-line: #eceef0;
+  --ink: #1c1d20;
+  --ink-2: #5e6268;
+  --ink-3: #8c9096;
+  --welcome-bg: #f4f5f7;
+  --sun-a: transparent;
+  --sun-b: transparent;
+  --ambient-hi: transparent;
+  --glass-bg: rgba(255, 255, 255, 0.82);
+  --glass-border: rgba(18, 20, 24, 0.08);
+  --glass-hi: rgba(255, 255, 255, 0.75);
+  --glass-shade: rgba(18, 20, 24, 0.04);
+  --noise-opacity: 0;
+  --mask: rgba(16, 18, 22, 0.28);
+  --toast-bg: rgba(28, 30, 34, 0.92);
+  --toast-ink: #f8f9fa;
+  --shadow-xs: 0 1px 1px rgba(18, 20, 24, 0.03);
+  --shadow-sm: 0 1px 4px rgba(18, 20, 24, 0.05);
+  --shadow-md: 0 10px 28px rgba(18, 20, 24, 0.07);
+  --shadow-lg: 0 22px 56px rgba(18, 20, 24, 0.12);
+}
+
+[data-ui="flat"][data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #151714;
+  --surface: #1c1e1b;
+  --surface-2: #242623;
+  --surface-3: #2c2f2b;
+  --border: #343732;
+  --border-strong: #464a44;
+  --text: #eef0ec;
+  --text-2: #b1b5ad;
+  --text-3: #858a82;
+  --text-4: #646861;
+  --hover: rgba(245, 247, 242, 0.05);
+  --pressed: rgba(245, 247, 242, 0.09);
+  --danger: #e27e73;
+  --danger-soft: rgba(226, 126, 115, 0.12);
+  --welcome-bg: #151714;
+  --sun-a: transparent;
+  --sun-b: transparent;
+  --ambient-hi: transparent;
+  --glass-bg: rgba(28, 30, 27, 0.82);
+  --glass-border: rgba(245, 247, 242, 0.08);
+  --glass-hi: rgba(245, 247, 242, 0.1);
+  --glass-shade: rgba(0, 0, 0, 0.18);
+  --noise-opacity: 0;
+  --mask: rgba(0, 0, 0, 0.5);
+  --toast-bg: rgba(242, 244, 239, 0.94);
+  --toast-ink: #1c1e1b;
+}
+
 /* ---------- 主题色：只换令牌，不换图片 ---------- */
 [data-theme="light"][data-accent="rust"],
 :root[data-accent="rust"] {

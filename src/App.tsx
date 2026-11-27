@@ -30,6 +30,7 @@ import type {
   SnapshotInfo,
   ThemeMode,
   UiLanguage,
+  UiStyle,
   ViewKind,
   Volume,
 } from "./types";
@@ -345,6 +346,9 @@ export default function App() {
   const [accent, setAccent] = useState<AccentTheme>(
     readLS("chapter.accent", "amber") as AccentTheme,
   );
+  const [uiStyle, setUiStyle] = useState<UiStyle>(() =>
+    readLS("chapter.ui", "wood") === "flat" ? "flat" : "wood",
+  );
   const [motion, setMotion] = useState<MotionMode>(
     readLS("chapter.motion", "full") as MotionMode,
   );
@@ -391,6 +395,8 @@ export default function App() {
       }
       const theme = entries["chapter.theme"];
       if (theme === "light" || theme === "dark" || theme === "system") setThemeMode(theme);
+      const ui = entries["chapter.ui"];
+      if (ui === "wood" || ui === "flat") setUiStyle(ui);
       const lang = entries["chapter.lang"];
       if (lang) setLanguage(lang as UiLanguage);
     };
@@ -681,6 +687,7 @@ export default function App() {
   }, [theme, themeMode]);
 
   useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
     const win = getCurrentWindow();
     let busy = false;
     const onKey = (e: KeyboardEvent) => {
@@ -741,6 +748,15 @@ export default function App() {
       /* ignore */
     }
   }, [accent]);
+
+  useEffect(() => {
+    document.documentElement.dataset.ui = uiStyle;
+    try {
+      localStorage.setItem("chapter.ui", uiStyle);
+    } catch {
+      /* ignore */
+    }
+  }, [uiStyle]);
 
   useEffect(() => {
     document.documentElement.dataset.motion = motion;
@@ -1081,6 +1097,7 @@ export default function App() {
 
   // 关闭窗口前把最后一屏字落盘，避免「点 X 丢一段」。
   useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
     let unlisten: (() => void) | undefined;
     let closing = false;
     const win = getCurrentWindow();
@@ -2654,6 +2671,13 @@ export default function App() {
 
   const flat = useMemo(() => (project ? allChapters(project.outline) : []), [project]);
   const chapterIndex = activeChapter ? flat.findIndex((c) => c.id === activeChapter.id) : -1;
+  const activeVolume = useMemo(
+    () =>
+      project && activeChapter
+        ? project.outline.volumes.find((v) => v.chapters.some((c) => c.id === activeChapter.id)) ?? null
+        : null,
+    [project, activeChapter],
+  );
 
   const bookWords = useMemo(
     () => flat.reduce((n, c) => n + (c.words ?? 0), 0),
@@ -2770,6 +2794,7 @@ export default function App() {
             onToggleTheme={toggleTheme}
             onSettings={() => openSettings()}
             onAddVolume={addVolume}
+            onAddChapter={addChapter}
           />
           </Suspense>
         ) : (
@@ -2873,6 +2898,8 @@ export default function App() {
                     bookPath={project.path}
                     index={chapterIndex >= 0 ? chapterIndex : 0}
                     total={flat.length}
+                    volumeTitle={activeVolume?.title}
+                    saveState={saveState}
                     bookWords={bookWords}
                     todayAdded={todayAdded}
                     focusMode={focus}
@@ -3212,6 +3239,7 @@ export default function App() {
             initialSection={settingsSection}
             themeMode={themeMode}
             accent={accent}
+            uiStyle={uiStyle}
             motion={motion}
             lightEffect={lightEffect}
             homeMode={homeMode}
@@ -3231,6 +3259,7 @@ export default function App() {
             onLanguage={setLanguage}
             onPaper={setPaper}
             onAccent={setAccent}
+            onUiStyle={setUiStyle}
             onLightEffect={setLightEffect}
             onPickBg={pickBackground}
             onClearBg={clearBackground}

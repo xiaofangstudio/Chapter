@@ -36,3 +36,5 @@ src-tauri/gen/
 /crop-top.png
 ui.xml
 .tools/
+
+/flat-*.png

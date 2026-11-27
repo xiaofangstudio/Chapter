@@ -416,6 +416,11 @@ export interface ImportChapter {
 
 export type ViewKind = "write" | "outline" | "bookOutline" | "lore";
 export type ThemeMode = "light" | "dark" | "system";
+export type UiStyle = "wood" | "flat";
+export const UI_STYLES: { key: UiStyle; label: string; note: string }[] = [
+  { key: "wood", label: "金丝楠木", note: "暖纸、木色与金色丝线" },
+  { key: "flat", label: "扁平化", note: "近白分层，颜色只作点缀" },
+];
 export type MotionMode = "full" | "reduced" | "off";
 export type LightEffect = "still" | "flow" | "spot";
 export type SaveState = "idle" | "dirty" | "saving" | "saved";

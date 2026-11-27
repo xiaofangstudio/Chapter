@@ -90,7 +90,7 @@ export function TopBar(props: Props) {
   ];
 
   return (
-    <header className="topbar">
+    <header className={`topbar${view === "write" ? " is-write" : ""}`}>
       <div className="topbar-left">
         <button className="icon-btn topbar-nav-toggle" title={t("目录")} onClick={onToggleSidebar}>
           <Icon name="outline" size={17} />
