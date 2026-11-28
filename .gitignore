@@ -42,3 +42,6 @@ ui.xml
 /intro-cover.png
 /Chapter_*.png
 /i18n-missing.txt
+/tmp*.png
+/workbench_*.png
+/mobile_*.png
