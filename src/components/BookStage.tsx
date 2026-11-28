@@ -42,11 +42,10 @@ export function BookObject({ book, coverUrl, className = "" }: BookObjectProps) 
     "--book-w": "var(--stage-book-w, 234px)",
     "--book-h": "var(--stage-book-h, 336px)",
     "--book-depth": `${depth}px`,
+    "--book-edge": `${Math.min(18, Math.max(8, Math.round(depth * 0.55)))}px`,
     "--spine-color": spine,
     "--cover-foil": template.ink,
   } as CSSProperties;
-  // 不把 data URL 塞进 CSS 自定义属性：base64 里的分号会被样式解析截断。
-  const spineImage = custom && coverUrl ? { backgroundImage: `url("${coverUrl}")` } : undefined;
 
   return (
     <div
@@ -54,8 +53,11 @@ export function BookObject({ book, coverUrl, className = "" }: BookObjectProps) 
       style={style}
     >
       <span className="bc-shadow" aria-hidden="true" />
-      <span className="bc-spine" aria-hidden="true" style={spineImage}>
-        {custom && coverUrl && <i className="bc-spine-title">{book.title}</i>}
+      <span className="bc-back" aria-hidden="true" />
+      <span className="bc-top" aria-hidden="true" />
+      <span className="bc-bottom" aria-hidden="true" />
+      <span className="bc-spine" aria-hidden="true">
+        <i className="bc-spine-title">{book.title}</i>
       </span>
       <span className="bc-pages" aria-hidden="true" />
       <div className="bc-face">
@@ -214,8 +216,12 @@ export function BookStage({ books, covers, initialPath, originRect, onClose, onE
         const nx = clamp((px - (w / 2 + x)) / Math.max(230, w * 0.25), -1.15, 1.15);
         // 上下方向与鼠标一致：鼠标在上，书的上沿向观察者抬起。
         const ny = clamp((py - (h / 2 + y)) / Math.max(150, h * 0.38), -1.15, 1.15);
-        const targetX = isFocus && active ? clamp(-ny * 9.2, -13, 12) : 0;
-        const targetY = isFocus && active ? clamp(nx * 12.4, -17, 17) : 0;
+        // 焦点书先立起一个固定侧角，书脊和纸边才真的朝向观察者；
+        // 鼠标再在这个基准上加减，而不是把整本书压成一张正面卡片。
+        const baseX = isFocus ? -4 : 0;
+        const baseY = isFocus ? 24 : 0;
+        const targetX = baseX + (isFocus && active ? clamp(-ny * 7.2, -9, 9) : 0);
+        const targetY = baseY + (isFocus && active ? clamp(nx * 8.4, -12, 12) : 0);
         const cur = tiltRef.current.get(i) ?? { x: 0, y: 0 };
         const ease = 1 - Math.pow(0.8, 1.15);
         cur.x += (targetX - cur.x) * ease;

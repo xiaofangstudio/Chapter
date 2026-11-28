@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { StudioStatusBar } from "./StudioStatusBar";
 import "../../styles/cover-paint.css";
 import { CoverRasterEditor } from "./CoverRasterEditor";
 import { CoverVectorEditor } from "./CoverVectorEditor";
@@ -65,7 +64,6 @@ export function CoverPaintStudio({
 
   return (
     <div className="cps-root" role="dialog" aria-modal="true">
-      <StudioStatusBar />
       <header className="cps-choose-head">
         <button className="cps-icon-btn" onClick={onClose} aria-label="关闭">
           <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>

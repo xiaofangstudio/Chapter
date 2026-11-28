@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { t } from "../lib/i18n";
 import { Icon } from "./Icon";
 import { Modal } from "./Modals";
@@ -209,6 +210,20 @@ export function CoverDesignerDialog({
     }
   };
 
+  if (paintOpen) {
+    return createPortal(
+      <CoverPaintStudio
+        title={bookTitle || title}
+        author={writer || author}
+        onClose={() => setPaintOpen(false)}
+        onApply={async (dataUrl) => {
+          await onApply(dataUrl, spine);
+        }}
+      />,
+      document.body,
+    );
+  }
+
   return (
     <Modal
       title={t("封面设计器")}
@@ -292,16 +307,6 @@ export function CoverDesignerDialog({
           </div>
         </div>
       </div>
-      {paintOpen && (
-        <CoverPaintStudio
-          title={bookTitle || title}
-          author={writer || author}
-          onClose={() => setPaintOpen(false)}
-          onApply={async (dataUrl) => {
-            await onApply(dataUrl, spine);
-          }}
-        />
-      )}
     </Modal>
   );
 }

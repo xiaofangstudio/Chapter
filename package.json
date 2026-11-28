@@ -1,7 +1,7 @@
 {
   "name": "chapter",
   "private": true,
-  "version": "1.9.2",
+  "version": "1.9.10",
   "type": "module",
   "description": "Chapter · 小方工作室出品 · 全中文、永久免费开源（MIT）的长篇小说写作工作台",
   "license": "MIT",
@@ -38,3 +38,4 @@
     "vite": "^7.3.6"
   }
 }
+

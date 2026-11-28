@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { StudioStatusBar } from "./StudioStatusBar";
+import { ConfirmDialog } from "../Modals";
 import type { PaintDims } from "./CoverPaintStudio";
 import { booleanSubpaths, type BoolOp } from "./vexa/bool";
 import { anchorAt, noPaint, noStroke, type PathNode, type SubPath } from "./vexa/types";
@@ -191,6 +191,7 @@ export function CoverVectorEditor({
   const [panel, setPanel] = useState<"brush" | "layers" | "adjust">("brush");
   const [sheet, setSheet] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [leaveAsk, setLeaveAsk] = useState(false);
   const [, setHistV] = useState(0);
   const undoRef = useRef<VObj[][]>([]);
   const redoRef = useRef<VObj[][]>([]);
@@ -679,7 +680,10 @@ export function CoverVectorEditor({
   };
 
   const leave = () => {
-    if ((objectsRef.current.length > 0 || undoRef.current.length > 0) && !window.confirm("返回会丢失当前矢量画稿，确定离开画室？")) return;
+    if (objectsRef.current.length > 0 || undoRef.current.length > 0) {
+      setLeaveAsk(true);
+      return;
+    }
     onClose();
   };
 
@@ -808,7 +812,6 @@ export function CoverVectorEditor({
 
   return (
     <div className={`cps-root cpr-root${sheet ? " sheet-open" : ""}`}>
-      <StudioStatusBar />
       <header className="cpr-head">
         <button className="cps-icon-btn" onClick={leave} aria-label="返回">
           <svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7" /></svg>
@@ -899,6 +902,20 @@ export function CoverVectorEditor({
           <button className="primary" onClick={() => void finish()} disabled={busy}>用作封面</button>
         </div>
       </footer>
+
+      {leaveAsk && (
+        <ConfirmDialog
+          title="离开画室？"
+          message="当前矢量画稿还没有用作封面，离开后这些路径不会保留。"
+          confirmText="离开"
+          danger
+          onClose={() => setLeaveAsk(false)}
+          onOk={() => {
+            setLeaveAsk(false);
+            onClose();
+          }}
+        />
+      )}
     </div>
   );
 }

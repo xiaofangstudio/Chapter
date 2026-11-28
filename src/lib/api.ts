@@ -137,6 +137,9 @@ export const api = {
   transferConfirm: () => invoke<TransferSnapshot>("transfer_confirm"),
   transferCancel: () => invoke<TransferSnapshot>("transfer_cancel"),
   transferClose: () => invoke<void>("transfer_close"),
+  syncManifest: (path: string) => invoke<unknown>("sync_manifest", { path }),
+  exportChapterpack: (path: string) =>
+    invoke<string>("export_chapterpack", { path }),
   importChapterpack: (data: string) =>
     invoke<string>("import_chapterpack", { data }),
 };

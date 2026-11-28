@@ -7,7 +7,11 @@ import { companionDays, pickWelcome } from "../lib/welcome";
 import { Icon } from "./Icon";
 import { Logo } from "./Logo";
 import { BookStage } from "./BookStage";
+import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { NovelCover } from "./NovelCover";
+import { TransferDialog } from "./TransferDialog";
+import { UserWelcome } from "./UserWelcome";
+import type { LocalProfile } from "../lib/profile";
 
 interface Props {
   books: BookSummary[];
@@ -16,11 +20,16 @@ interface Props {
   totalWords: number;
   dailyLog: Record<string, number>;
   theme: "light" | "dark";
+  profile: LocalProfile;
   onOpen: (book: BookSummary) => void;
+  onRenameBook: (book: BookSummary) => void;
+  onDeleteBook: (book: BookSummary) => void;
+  onRevealBook: (book: BookSummary) => void;
   onNew: () => void;
   onImport: () => void;
   onOpenFolder: () => void;
   onTransfer: () => void;
+  onTransferApplied: (path: string, appData?: string | null) => void;
   onScan: () => void;
   onSettings: () => void;
   onToggleTheme: () => void;
@@ -34,7 +43,7 @@ interface Props {
   onSetSeriesShared: (seriesId: string, bookId: string, entryId: string, shared: boolean) => Promise<void>;
 }
 
-type WbPane = "home" | "shelf" | "stats" | "notes";
+type WbPane = "home" | "shelf" | "stats" | "notes" | "transfer";
 
 const PANE_KEY = "chapter.workspacePane";
 const PIN_KEY = "chapter.pinnedBook";
@@ -70,7 +79,8 @@ function readPin(): string {
 
 function readPane(): WbPane {
   const saved = readStorage(PANE_KEY, "home");
-  return saved === "shelf" || saved === "stats" || saved === "notes" ? saved : "home";
+  if (saved === "transfer" && typeof window !== "undefined" && window.innerWidth <= 820) return "home";
+  return saved === "shelf" || saved === "stats" || saved === "notes" || saved === "transfer" ? saved : "home";
 }
 
 interface Note {
@@ -148,6 +158,7 @@ const PANE_META: Record<WbPane, { label: string; eyebrow: string }> = {
   shelf: { label: "书架", eyebrow: "THE SHELF" },
   stats: { label: "写作统计", eyebrow: "WRITING RHYTHM" },
   notes: { label: "灵感便签", eyebrow: "MARGINS" },
+  transfer: { label: "手机互传", eyebrow: "LOCAL TRANSFER" },
 };
 
 export function WorkspaceHome({
@@ -157,11 +168,16 @@ export function WorkspaceHome({
   totalWords,
   dailyLog,
   theme,
+  profile,
   onOpen,
+  onRenameBook,
+  onDeleteBook,
+  onRevealBook,
   onNew,
   onImport,
   onOpenFolder,
   onTransfer,
+  onTransferApplied,
   onScan,
   onSettings,
   onToggleTheme,
@@ -191,6 +207,7 @@ export function WorkspaceHome({
   const [clock, setClock] = useState(new Date());
   const [welcome, setWelcome] = useState(pickWelcome);
   const [pin, setPin] = useState(readPin);
+  const [bookMenu, setBookMenu] = useState<{ x: number; y: number; book: BookSummary } | null>(null);
   const [stageOpen, setStageOpen] = useState(false);
   const [stageOrigin, setStageOrigin] = useState<DOMRect | null>(null);
   const [query, setQuery] = useState("");
@@ -220,8 +237,21 @@ export function WorkspaceHome({
 
   useEffect(() => {
     window.__chapterBackExtra = () => {
+      if (bookMenu) {
+        setBookMenu(null);
+        return true;
+      }
+      if (stageOpen) {
+        setStageOpen(false);
+        setStageOrigin(null);
+        return true;
+      }
       if (noteDeskOpen) {
         setNoteDeskOpen(false);
+        return true;
+      }
+      if (seriesOpen) {
+        setSeriesOpen(false);
         return true;
       }
       return false;
@@ -229,7 +259,7 @@ export function WorkspaceHome({
     return () => {
       delete window.__chapterBackExtra;
     };
-  }, [noteDeskOpen]);
+  }, [bookMenu, stageOpen, noteDeskOpen, seriesOpen]);
 
   useEffect(() => {
     setWelcome(pickWelcome());
@@ -310,6 +340,12 @@ export function WorkspaceHome({
     [comicBooks],
   );
   const currentIsComic = current?.kind === "comic";
+  const bookMenuItems = (book: BookSummary): MenuItem[] => [
+    { label: t("打开这本书"), icon: "book", onClick: () => onOpen(book) },
+    { label: t("重命名这本书"), icon: "edit", onClick: () => onRenameBook(book) },
+    { label: t("在文件夹中显示"), icon: "folder", onClick: () => onRevealBook(book) },
+    { label: t("移到回收站"), icon: "trash", danger: true, onClick: () => onDeleteBook(book) },
+  ];
 
   const isPinned = Boolean(current && current.path === pin);
   const currentCover = current ? coverFor(current, covers) : undefined;
@@ -551,10 +587,13 @@ export function WorkspaceHome({
         ? `${books.length} ${t("本")} · ${novelBooks.length} ${t("小说")} · ${comicBooks.length} ${t("漫画")}`
         : pane === "stats"
           ? `${t("近 30 天")} · ${fmtWords(sum30)} ${t("字")}`
-          : `${notes.length} ${t("条")} · ${t("只存在这台电脑上")}`;
+          : pane === "transfer"
+            ? `${t("同一个 Wi-Fi")} · ${t("书稿不经过云端")}`
+            : `${notes.length} ${t("条")} · ${t("只存在这台电脑上")}`;
 
-  const railItems: { key: WbPane; icon: "book" | "outline" | "clock" | "quote"; label: string }[] = [
+  const railItems: { key: WbPane; icon: "book" | "outline" | "clock" | "quote" | "qr"; label: string }[] = [
     { key: "home", icon: "book", label: "工作台" },
+    { key: "transfer", icon: "qr", label: "手机互传" },
     { key: "shelf", icon: "outline", label: "书架" },
     { key: "stats", icon: "clock", label: "写作统计" },
     { key: "notes", icon: "quote", label: "灵感便签" },
@@ -566,7 +605,7 @@ export function WorkspaceHome({
    */
   const switchPane = (next: WbPane) => {
     if (next === pane) return;
-    const order: WbPane[] = ["home", "shelf", "stats", "notes"];
+    const order: WbPane[] = ["home", "transfer", "shelf", "stats", "notes"];
     const dir: "up" | "down" = order.indexOf(next) > order.indexOf(pane) ? "up" : "down";
     const calm =
       document.documentElement.dataset.motion === "off" ||
@@ -585,7 +624,16 @@ export function WorkspaceHome({
   };
 
   const paneView = (which: WbPane) => (
-which === "home" ? (
+which === "transfer" ? (
+          <TransferDialog
+            mode="pane"
+            bookPath={null}
+            outline={null}
+            onClose={() => switchPane("home")}
+            onScan={onScan}
+            onApplied={onTransferApplied}
+          />
+        ) : which === "home" ? (
           <main className="workbench">
             <div className="wb-glance">
               <div className="wb-glance-left">
@@ -607,9 +655,18 @@ which === "home" ? (
               </div>
             </div>
 
-            <section className="wb-greeting">
-              <p className="wb-eyebrow">{currentIsComic ? t("今天想画点什么") : t("今天想写点什么")}</p>
-              <h1>{t(welcome)}</h1>
+            <section className={`wb-greeting${profile.showPrompts ? "" : " no-prompt"}`}>
+              {profile.showGreeting && (
+                <div className="wb-mobile-user">
+                  <UserWelcome profile={profile} variant="workbench" />
+                </div>
+              )}
+              {profile.showPrompts && (
+                <>
+                  <p className="wb-eyebrow">{currentIsComic ? t("今天想画点什么") : t("今天想写点什么")}</p>
+                  <h1>{t(welcome)}</h1>
+                </>
+              )}
               <div className="wb-quick">
                 <button className="btn btn-primary btn-sm" onClick={current ? () => onOpen(current) : onNew}>
                   <Icon name={currentIsComic ? "image" : "edit"} size={14} />
@@ -631,7 +688,14 @@ which === "home" ? (
             </section>
 
             <div className="wb-grid">
-              <section className={`wb-book-card glow-card${current ? "" : " is-empty"}`}>
+              <section
+                className={`wb-book-card glow-card${current ? "" : " is-empty"}`}
+                onContextMenu={(e) => {
+                  if (!current) return;
+                  e.preventDefault();
+                  setBookMenu({ x: e.clientX, y: e.clientY, book: current });
+                }}
+              >
                 {current ? (
                   <>
                     <div className="wb-book-head">
@@ -929,7 +993,15 @@ which === "home" ? (
               <>
               <div className="wb-shelf-grid">
                 {pagedShelf.map((b) => (
-                  <button key={b.path} className="wb-shelf-card" onClick={() => onOpen(b)}>
+                  <button
+                    key={b.path}
+                    className="wb-shelf-card"
+                    onClick={() => onOpen(b)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setBookMenu({ x: e.clientX, y: e.clientY, book: b });
+                    }}
+                  >
                     <div className="wb-shelf-cover">
                       <NovelCover
                         title={b.title}
@@ -1274,7 +1346,7 @@ which === "home" ? (
             <button
               key={item.key}
               type="button"
-              className={`wb-rail-item${pane === item.key ? " on" : ""}`}
+              className={`wb-rail-item${pane === item.key ? " on" : ""}${item.key === "transfer" ? " wb-rail-transfer" : ""}`}
               aria-current={pane === item.key ? "page" : undefined}
               onClick={() => switchPane(item.key)}
               title={t(item.label)}
@@ -1339,13 +1411,21 @@ which === "home" ? (
       <div className="wb-main" ref={mainRef}>
         <header className="welcome-top wb-main-top">
           <div className="wb-top-copy">
-            <span className="wb-top-eyebrow">CHAPTER / {paneMeta.eyebrow}</span>
-            {pane === "home" && <h2>{t(paneMeta.label)}</h2>}
-            <p>{paneSubtitle}</p>
+            <span className="wb-top-eyebrow">
+              CHAPTER / {pane === "home" && profile.showGreeting ? t("工作台") : paneMeta.eyebrow}
+            </span>
+            {pane === "home" && profile.showGreeting ? (
+              <UserWelcome profile={profile} variant="workbench" />
+            ) : (
+              <>
+                {pane === "home" && <h2>{t(paneMeta.label)}</h2>}
+                <p>{paneSubtitle}</p>
+              </>
+            )}
           </div>
           <div className="spacer" />
-          <button className="home-mode-btn" onClick={onTransfer} title={t("手机互传")}>
-            <Icon name="arrow" size={14} />
+          <button className="home-mode-btn wb-top-transfer" onClick={() => switchPane("transfer")} title={t("手机互传")}>
+            <Icon name="qr" size={14} />
             {t("手机互传")}
           </button>
           <button className="home-mode-btn" onClick={onMinimal} title={t("切回极简首页")}>
@@ -1623,6 +1703,15 @@ which === "home" ? (
             setStageOrigin(null);
             onOpen(book);
           }}
+        />
+      )}
+
+      {bookMenu && (
+        <ContextMenu
+          x={bookMenu.x}
+          y={bookMenu.y}
+          items={bookMenuItems(bookMenu.book)}
+          onClose={() => setBookMenu(null)}
         />
       )}
     </div>

@@ -785,6 +785,13 @@ fn build_package(session: &TransferSession) -> Result<(PathBuf, u64, usize, usiz
         })
         .cloned()
         .collect();
+    // 两边完全一致时不再直接结束：仍然按当前方向全量重传一遍。
+    // 这样“没区别”只是比较结果，不是拒绝传输的理由。
+    let changed = if changed.is_empty() {
+        source.files.clone()
+    } else {
+        changed
+    };
     let temp = std::env::temp_dir().join(format!("chapter-sync-{}.chapterpack", session.token));
     let file = File::create(&temp).map_err(|e| format!("创建同步包失败：{e}"))?;
     let mut zip = ZipWriter::new(file);
@@ -835,6 +842,45 @@ fn unique_book_dir(library: &Path, title: &str) -> PathBuf {
         n += 1;
     }
     library.join(name)
+}
+
+/// 手机把当前书打成完整 `.chapterpack`，用于“手机 → 电脑”方向。
+/// 返回 base64，前端直接 POST 给电脑的 /upload，不再需要先导出到文件管理器。
+#[tauri::command]
+pub fn export_chapterpack(path: String) -> Result<String, String> {
+    let book = PathBuf::from(path);
+    if !book.is_dir() {
+        return Err("这本书的工程目录不存在".into());
+    }
+    let manifest = build_manifest(Some(&book))?;
+    if manifest.files.is_empty() {
+        return Err("这本书还没有可传的内容".into());
+    }
+    let temp = std::env::temp_dir().join(format!("chapter-phone-{}.chapterpack", now_ms()));
+    let file = File::create(&temp).map_err(|e| format!("创建手机同步包失败：{e}"))?;
+    let mut zip = ZipWriter::new(file);
+    let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    for f in &manifest.files {
+        let bytes = read_sync_bytes(&book, &f.path)?;
+        zip.start_file(&f.path, options)
+            .map_err(|e| format!("写入手机同步包失败：{e}"))?;
+        zip.write_all(&bytes)
+            .map_err(|e| format!("写入手机同步包失败：{e}"))?;
+    }
+    zip.start_file("sync-manifest.json", options)
+        .map_err(|e| format!("写入手机书目失败：{e}"))?;
+    zip.write_all(&serde_json::to_vec(&manifest).map_err(|e| format!("手机书目序列化失败：{e}"))?)
+        .map_err(|e| format!("写入手机书目失败：{e}"))?;
+    zip.finish().map_err(|e| format!("收尾手机同步包失败：{e}"))?;
+    let bytes = fs::read(&temp).map_err(|e| format!("读取手机同步包失败：{e}"))?;
+    let _ = fs::remove_file(&temp);
+    if bytes.len() > 256 * 1024 * 1024 {
+        return Err("手机书稿超过 256 MB，暂时不能走这一步".into());
+    }
+    Ok(base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        bytes,
+    ))
 }
 
 /// 手机端从浏览器/文件管理器下载了 `.chapterpack`，用 WebView 的 file input
@@ -1489,6 +1535,15 @@ getState();let autoPairTried=false;setInterval(()=>{getState();if(!autoPairTried
 /* ───────────────────────── Tauri 命令 ───────────────────────── */
 
 #[tauri::command]
+pub fn sync_manifest(path: String) -> Result<SyncManifest, String> {
+    let dir = PathBuf::from(path);
+    if !dir.is_dir() {
+        return Err("这本书的工程目录不存在".into());
+    }
+    build_manifest(Some(&dir))
+}
+
+#[tauri::command]
 pub fn transfer_start(
     app: AppHandle,
     book_path: Option<String>,
@@ -1625,14 +1680,7 @@ pub fn transfer_confirm() -> Result<TransferSnapshot, String> {
         .clone()
         .ok_or("还没有比较结果")?;
     let direction = session.direction.lock().unwrap().clone();
-    if direction == "pc_to_phone" && comparison.changed_pc_to_phone == 0 {
-        session.set_phase("done");
-        return Ok(session.snapshot());
-    }
-    if direction == "phone_to_pc" && comparison.changed_phone_to_pc == 0 {
-        session.set_phase("done");
-        return Ok(session.snapshot());
-    }
+    // 0 项差异也允许继续：电脑 → 手机会打全量包，手机 → 电脑会等待手机上传全量包。
     *session.progress_state.lock().unwrap() = ProgressState {
         current_file: "正在准备同步包".into(),
         files_done: 0,

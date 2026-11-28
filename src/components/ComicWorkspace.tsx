@@ -1699,6 +1699,7 @@ export function ComicWorkspace({
   const paperFitRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const strokeRef = useRef<StrokeSession | null>(null);
+  const focusPointerRef = useRef<number | null>(null);
   const strokeDirtyRef = useRef<Rect | null>(null);
   const strokeLastPointRef = useRef<Point | null>(null);
   const liquifySessionRef = useRef<{
@@ -2552,30 +2553,33 @@ export function ComicWorkspace({
     };
   }, [chapterId, firstChapterId, loadPage, path]);
 
-  /* 尺寸：页面适配窗口 */
+  /* 尺寸：页面适配真实画布容器，而不是拿整块舞台减固定像素 */
   useEffect(() => {
     const calc = () => {
-      const stage = stageRef.current;
+      const fit = paperFitRef.current;
       const p = pageRef.current;
-      if (!stage || !p) return;
-      const compact = window.matchMedia("(max-width: 820px)").matches;
-      const w = Math.max(120, stage.clientWidth - (compact ? 20 : 110));
-      const h = Math.max(120, stage.clientHeight - (compact ? 240 : 158));
+      if (!fit || !p) return;
+      const style = window.getComputedStyle(fit);
+      const padX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+      const padY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+      const w = Math.max(80, fit.clientWidth - padX);
+      const h = Math.max(80, fit.clientHeight - padY);
       setFitScale(Math.min(w / p.width, h / p.height, 1.35));
       const frame = focusFrameRef.current;
       if (frame) {
-        const fw = Math.max(120, stage.clientWidth - (compact ? 24 : 120));
-        const fh = Math.max(120, stage.clientHeight - (compact ? 150 : 188));
-        setFocusFit(Math.min(fw / frame.w, fh / frame.h, 3.2));
+        setFocusFit(Math.min(w / frame.w, h / frame.h, 3.2));
       }
     };
     calc();
     const ro = new ResizeObserver(calc);
     if (stageRef.current) ro.observe(stageRef.current);
+    if (paperFitRef.current) ro.observe(paperFitRef.current);
     window.addEventListener("resize", calc);
+    window.addEventListener("orientationchange", calc);
     return () => {
       ro.disconnect();
       window.removeEventListener("resize", calc);
+      window.removeEventListener("orientationchange", calc);
     };
   }, [page?.id, focusId]);
 
@@ -3740,6 +3744,23 @@ export function ComicWorkspace({
   /* ───────── 格内绘制 ───────── */
 
   const onFocusPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    // 只认第一根落下的笔/手指：第二根手指、搁在屏上的手掌和指节都不参与这一笔。
+    // 手写笔后到时会接管：先把手指刚起头的半截笔迹丢掉，别让笔跟着手掌的轨迹走。
+    if (focusPointerRef.current !== null) {
+      if (e.pointerType !== "pen") return;
+      if (moveSessionRef.current || liquifySessionRef.current || shapeSessionRef.current) return;
+      strokeRef.current = null;
+      strokeDirtyRef.current = null;
+      strokeLastPointRef.current = null;
+      focusBaseRef.current = null;
+      selectionDraftRef.current = null;
+      focusPointerRef.current = null;
+      scheduleRender();
+    }
+    if (
+      e.pointerType === "touch" &&
+      (!e.isPrimary || Math.max(e.width || 0, e.height || 0) > 26)
+    ) return;
     const p = pageRef.current;
     const frame = focusFrameRef.current;
     if (!p || !frame || busy) return;
@@ -3771,6 +3792,8 @@ export function ComicWorkspace({
       setStatus("点在格外面，这一笔没有落下");
       return;
     }
+    // 从这一笔真正落在画布上开始锁定 pointerId，松手/取消时才释放。
+    focusPointerRef.current = e.pointerId;
     if (toolRef.current === "selection") {
       const mode: SelectionMode = e.shiftKey ? "add" : e.altKey ? "subtract" : selectionCombine;
       if (selectionShape === "wand") {
@@ -3963,6 +3986,7 @@ export function ComicWorkspace({
   };
 
   const onFocusPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (focusPointerRef.current !== e.pointerId) return;
     const draft = selectionDraftRef.current;
     if (draft) {
       const pt = toFocusPoint(e.clientX, e.clientY);
@@ -4145,6 +4169,7 @@ export function ComicWorkspace({
   };
 
   const finishStroke = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (focusPointerRef.current !== e.pointerId) return;
     const draft = selectionDraftRef.current;
     if (draft) {
       const frame = focusFrameRef.current;
@@ -4320,6 +4345,15 @@ export function ComicWorkspace({
     setStatus("笔迹已写入图层");
     scheduleSave();
     scheduleRender();
+  };
+
+  const endFocusStroke = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (focusPointerRef.current !== e.pointerId) return;
+    try {
+      finishStroke(e);
+    } finally {
+      focusPointerRef.current = null;
+    }
   };
 
   /* ───────── 文本编辑 ───────── */
@@ -5693,8 +5727,8 @@ export function ComicWorkspace({
                   }}
                   onPointerDown={onFocusPointerDown}
                   onPointerMove={onFocusPointerMove}
-                  onPointerUp={finishStroke}
-                  onPointerCancel={finishStroke}
+                  onPointerUp={endFocusStroke}
+                  onPointerCancel={endFocusStroke}
                   onWheel={(e) => {
                     e.preventDefault();
                     setZoom((z) => clamp(z - Math.sign(e.deltaY) * 0.08, 0.4, 4));

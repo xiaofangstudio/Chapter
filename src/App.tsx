@@ -1,7 +1,7 @@
 import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { revealItemInDir, openUrl } from "@tauri-apps/plugin-opener";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { shareFile } from "@choochmeque/tauri-plugin-sharekit-api";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
@@ -66,6 +66,7 @@ import { formatChapterTitle, normalizeNumbering } from "./lib/numbering";
 import { ensureUiPack, setUiLanguage, t, tf } from "./lib/i18n";
 import { useProximityGlow } from "./lib/glow";
 import { readVoiceMarks } from "./lib/voice";
+import { readLocalProfile, writeLocalProfile, type LocalProfile } from "./lib/profile";
 import { Splash } from "./components/Splash";
 import { AmbientBackdrop, type AmbienceScene } from "./components/AmbientBackdrop";
 import { Welcome } from "./components/Welcome";
@@ -97,8 +98,18 @@ import { CoverCropDialog } from "./components/CoverCropDialog";
 import { CoverDesignerDialog } from "./components/CoverDesignerDialog";
 import { CoverPickerDialog } from "./components/CoverPickerDialog";
 import { TransferDialog } from "./components/TransferDialog";
+import { PhonePairPage } from "./components/PhonePairPage";
 import { QrScanner } from "./components/QrScanner";
+import { MobileSelectBridge } from "./components/MobileSelectBridge";
 import { applyAppData } from "./lib/appdata";
+
+function isPhoneDevice() {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+  return (
+    /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+    window.matchMedia("(max-width: 820px)").matches
+  );
+}
 
 const PrintStudio = lazy(() =>
   import("./components/PrintStudio").then((m) => ({ default: m.PrintStudio })),
@@ -313,6 +324,22 @@ type UndoEntry = {
 const IS_ANDROID_APP =
   typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
 
+function pairUrlFromScan(raw: string): string | null {
+  const text = raw.trim();
+  const pairShape = /\/(?:pair|t)\/[^/?#]+/i;
+  try {
+    if (/^chapter:\/\/pair/i.test(text)) {
+      const link = new URL(text);
+      const inner = link.searchParams.get("url");
+      return inner && /^https?:\/\//i.test(inner) && pairShape.test(inner) ? inner : null;
+    }
+    if (/^https?:\/\//i.test(text) && pairShape.test(text)) return text;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 export default function App() {
   useProximityGlow();
   const [books, setBooks] = useState<BookSummary[]>([]);
@@ -334,6 +361,19 @@ export default function App() {
   const [mobileNav, setMobileNav] = useState(false);
 
   useEffect(() => {
+    const read = () => {
+      const raw = (window as unknown as { __chapterPairIntent?: string }).__chapterPairIntent;
+      if (!raw) return;
+      delete (window as unknown as { __chapterPairIntent?: string }).__chapterPairIntent;
+      const url = pairUrlFromScan(raw);
+      if (url) setPhonePairUrl(url);
+    };
+    read();
+    window.addEventListener("chapter-pair-intent", read);
+    return () => window.removeEventListener("chapter-pair-intent", read);
+  }, []);
+
+  useEffect(() => {
     if (view === "write" && project?.meta.kind === "comic") setPanel(false);
     if (window.matchMedia("(max-width: 820px)").matches) setPanel(false);
     setMobileNav(false);
@@ -343,6 +383,7 @@ export default function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(
     readLS("chapter.theme", "system") as ThemeMode,
   );
+  const [profile, setProfile] = useState<LocalProfile>(readLocalProfile);
   const [accent, setAccent] = useState<AccentTheme>(
     readLS("chapter.accent", "amber") as AccentTheme,
   );
@@ -483,9 +524,12 @@ export default function App() {
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferBookPath, setTransferBookPath] = useState<string | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
+  const [phonePairUrl, setPhonePairUrl] = useState<string | null>(null);
   useEffect(() => {
     try {
-      if (sessionStorage.getItem("chapter.scan.pending") === "1") setScanOpen(true);
+      if (sessionStorage.getItem("chapter.scan.pending") === "1" && isPhoneDevice()) {
+        setScanOpen(true);
+      }
     } catch {
       /* ignore */
     }
@@ -1256,6 +1300,54 @@ export default function App() {
         closeModal();
         return true;
       }
+      if (phonePairUrl) {
+        setPhonePairUrl(null);
+        return true;
+      }
+      if (scanOpen) {
+        setScanOpen(false);
+        return true;
+      }
+      if (transferOpen) {
+        setTransferOpen(false);
+        return true;
+      }
+      if (printStudio) {
+        setPrintStudio(null);
+        return true;
+      }
+      if (coverDesignerOpen) {
+        setCoverDesignerOpen(false);
+        return true;
+      }
+      if (coverPickerOpen) {
+        setCoverPickerOpen(false);
+        return true;
+      }
+      if (coverDraft) {
+        setCoverDraft(null);
+        return true;
+      }
+      if (loreEdit) {
+        setLoreEdit(null);
+        return true;
+      }
+      if (sceneEdit) {
+        setSceneEdit(null);
+        return true;
+      }
+      if (lorePicker) {
+        setLorePicker(false);
+        return true;
+      }
+      if (matterDialog) {
+        setMatterDialog(false);
+        return true;
+      }
+      if (metaDialog) {
+        setMetaDialog(false);
+        return true;
+      }
       if (window.__chapterBackExtra?.()) return true;
       if (panel) {
         setPanel(false);
@@ -1263,6 +1355,10 @@ export default function App() {
       }
       if (mobileNav) {
         setMobileNav(false);
+        return true;
+      }
+      if (homeMode === "workspace" && !projectRef.current) {
+        setHomeMode("minimal");
         return true;
       }
       if (projectRef.current) {
@@ -1279,7 +1375,7 @@ export default function App() {
     return () => {
       delete window.__chapterBack;
     };
-  }, [modal, panel, mobileNav, intro, closeModal, backToShelf]);
+  }, [modal, panel, mobileNav, intro, closeModal, backToShelf, phonePairUrl, scanOpen, transferOpen, printStudio, coverDesignerOpen, coverPickerOpen, coverDraft, loreEdit, sceneEdit, lorePicker, matterDialog, metaDialog, homeMode]);
 
   /** 外部工具（MCP / Git）改过磁盘后，只重读当前工程，不替用户写回任何东西。 */
   const reloadFromDisk = useCallback(async (focusChapter?: string) => {
@@ -2732,6 +2828,7 @@ export default function App() {
   return (
     <div className="app">
       <AmbientBackdrop scene={scene} />
+      <MobileSelectBridge />
       <input
         ref={packageInputRef}
         type="file"
@@ -2795,6 +2892,9 @@ export default function App() {
             onSettings={() => openSettings()}
             onAddVolume={addVolume}
             onAddChapter={addChapter}
+            onRenameChapter={renameChapter}
+            onDeleteChapter={deleteChapter}
+            onMoveChapter={moveChapter}
           />
           </Suspense>
         ) : (
@@ -3045,7 +3145,48 @@ export default function App() {
           totalWords={books.reduce((n, b) => n + b.words, 0)}
           dailyLog={dailyLog}
           theme={theme}
+          profile={profile}
           onOpen={(b) => openProject(b.path)}
+          onRenameBook={(b) => {
+            setPrompt({
+              title: t("重命名这本书"),
+              label: t("书名"),
+              value: b.title,
+              confirmText: t("保存"),
+              onOk: async (value) => {
+                if (!value) return;
+                try {
+                  const raw = await api.openBook(b.path);
+                  const p = parseProject(raw);
+                  const meta = { ...p.meta, title: value };
+                  await api.saveJson(b.path, "book.json", JSON.stringify(meta));
+                  setPrompt(null);
+                  await refreshBooks();
+                } catch (e) {
+                  toast(`重命名失败：${errText(e)}`, { warn: true });
+                }
+              },
+            });
+          }}
+          onDeleteBook={(b) => {
+            setConfirm({
+              title: tf("删除《{title}》？", { title: b.title }),
+              message: t("整本工程会移到书库的 .回收站，不会立刻销毁。"),
+              confirmText: t("移到回收站"),
+              danger: true,
+              onOk: async () => {
+                setConfirm(null);
+                try {
+                  await api.deleteBook(b.path);
+                  await refreshBooks();
+                  toast("已移到回收站");
+                } catch (e) {
+                  toast(`删除失败：${errText(e)}`, { warn: true });
+                }
+              },
+            });
+          }}
+          onRevealBook={(b) => void revealItemInDir(b.path).catch(() => undefined)}
           onCreateSeries={createSeries}
           onUpdateSeries={updateSeries}
           onDeleteSeries={deleteSeries}
@@ -3057,6 +3198,11 @@ export default function App() {
           onTransfer={() => {
             setTransferBookPath(null);
             setTransferOpen(true);
+          }}
+          onTransferApplied={(path, appData) => {
+            if (appData) applyAppData(appData);
+            void openProject(path, { skipSave: true });
+            void refreshBooks();
           }}
           onScan={() => setScanOpen(true)}
           onOpenFolder={openExisting}
@@ -3070,6 +3216,7 @@ export default function App() {
           books={books}
           covers={covers}
           theme={theme}
+          profile={profile}
           totalWords={books.reduce((n, b) => n + b.words, 0)}
           onOpen={(b) => openProject(b.path)}
           onNew={() => setModal("new")}
@@ -3198,6 +3345,10 @@ export default function App() {
           outline={project.outline}
           onClose={() => setMetaDialog(false)}
           onSave={(patch) => saveBookMeta(patch)}
+          onDelete={() => {
+            setMetaDialog(false);
+            deleteBook();
+          }}
         />
       )}
 
@@ -3247,6 +3398,7 @@ export default function App() {
             paper={paper}
             bgPath={bgPath}
             library={library}
+            profile={profile}
             targetWords={project?.meta.targetWords}
             dailyGoal={project?.meta.dailyGoal}
             mcpEnabled={mcpEnabled}
@@ -3257,6 +3409,10 @@ export default function App() {
             onMotion={setMotion}
             onHomeMode={setHomeMode}
             onLanguage={setLanguage}
+            onProfile={(p) => {
+              setProfile(p);
+              writeLocalProfile(p);
+            }}
             onPaper={setPaper}
             onAccent={setAccent}
             onUiStyle={setUiStyle}
@@ -3348,16 +3504,29 @@ export default function App() {
           }}
         />
       )}
-      {scanOpen && (
+      {phonePairUrl && (
+        <PhonePairPage
+          url={phonePairUrl}
+          bookPath={project?.path ?? null}
+          onClose={() => setPhonePairUrl(null)}
+          onImported={(path) => {
+            setPhonePairUrl(null);
+            void refreshBooks();
+            if (path) void openProject(path, { skipSave: true });
+          }}
+        />
+      )}
+      {scanOpen && isPhoneDevice() && (
         <QrScanner
           onClose={() => setScanOpen(false)}
           onResult={(url) => {
             setScanOpen(false);
-            if (!/^https?:\/\//i.test(url)) {
+            const pairUrl = pairUrlFromScan(url);
+            if (!pairUrl) {
               toast("这个二维码不是 Chapter 的配对地址", { warn: true });
               return;
             }
-            void openUrl(url).catch((e) => toast(`打不开配对页：${errText(e)}`, { warn: true }));
+            setPhonePairUrl(pairUrl);
           }}
         />
       )}

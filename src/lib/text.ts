@@ -165,7 +165,11 @@ function mdToHtmlRaw(md: string): string {
       continue;
     }
     flushQuote();
+    // 中文小说常见“一行一段”，段与段之间不一定有空行。
+    // 以前这里把连续单行拼成一个 <p> + <br>，手机端只有第一行吃到
+    // text-indent，后面全像没分段；现在每个非空正文行都单独成段。
     para.push(line);
+    flushPara();
   }
   flushPara();
   flushQuote();

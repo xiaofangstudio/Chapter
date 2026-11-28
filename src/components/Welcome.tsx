@@ -2,16 +2,19 @@ import { useEffect, useState } from "react";
 import type { BookSummary, UiLanguage } from "../types";
 import { fmtWords, relTime } from "../lib/text";
 import { t } from "../lib/i18n";
-import { pickWelcome, greetingLine } from "../lib/welcome";
+import { pickWelcome } from "../lib/welcome";
+import type { LocalProfile } from "../lib/profile";
 import { Icon } from "./Icon";
 import { Logo } from "./Logo";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { NovelCover } from "./NovelCover";
+import { UserWelcome } from "./UserWelcome";
 
 interface Props {
   books: BookSummary[];
   covers: Record<string, string>;
   theme: "light" | "dark";
+  profile: LocalProfile;
   onOpen: (book: BookSummary) => void;
   onNew: () => void;
   onImport: () => void;
@@ -33,6 +36,7 @@ export function Welcome({
   books,
   covers,
   theme,
+  profile,
   onOpen,
   onNew,
   onImport,
@@ -108,18 +112,13 @@ export function Welcome({
 
       <main className="welcome-main">
         <section className="hero">
-          <p className="hero-welcome">
-            <span className="hero-hello">{greetingLine()}</span>
-            {inlineWelcome}
-          </p>
+          {profile.showGreeting && <UserWelcome profile={profile} variant="hero" />}
+          {profile.showPrompts && <p className="hero-welcome hero-prompt">{inlineWelcome}</p>}
           <h1>
             {t("一章一章，")}
             <br />
             <em>{t("写下去。")}</em>
           </h1>
-          <p>
-            {t("卷、章、场景，人物与设定，字数目标与专注模式——写长篇小说要用的东西，都收在这一张书桌上。写完，直接导出 EPUB。")}
-          </p>
           <div className="hero-actions">
             <button className="btn btn-primary btn-lg" onClick={onNew}>
               <Icon name="plus" size={17} />

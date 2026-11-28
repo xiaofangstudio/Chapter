@@ -13,6 +13,8 @@ interface Props {
   onClose: () => void;
   onScan: () => void;
   onApplied: (path: string, appData?: string | null) => void;
+  /** modal：电脑端旧弹窗 / 手机全屏页；pane：电脑工作台里的独立页。 */
+  mode?: "modal" | "pane";
 }
 
 function fmtBytes(n: number): string {
@@ -93,7 +95,8 @@ function countText(c: TransferComparison, direction: "pc_to_phone" | "phone_to_p
   return { count: c.changedPhoneToPc, bytes: c.changedBytesPhoneToPc };
 }
 
-export function TransferDialog({ bookPath, outline = null, onClose, onScan, onApplied }: Props) {
+export function TransferDialog({ bookPath, outline = null, onClose, onScan, onApplied, mode = "modal" }: Props) {
+  const pane = mode === "pane";
   const [snap, setSnap] = useState<TransferSnapshot | null>(null);
   const [qr, setQr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -102,7 +105,11 @@ export function TransferDialog({ bookPath, outline = null, onClose, onScan, onAp
   const alive = useRef(true);
   const callbacks = useRef({ onClose, onApplied });
   callbacks.current = { onClose, onApplied };
-  const isPhone = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+  const isPhone =
+    !pane &&
+    typeof navigator !== "undefined" &&
+    (/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+      (typeof window !== "undefined" && window.matchMedia("(max-width: 820px)").matches));
 
   useEffect(() => {
     alive.current = true;
@@ -170,7 +177,8 @@ export function TransferDialog({ bookPath, outline = null, onClose, onScan, onAp
       return;
     }
     let live = true;
-    QRCode.toDataURL(snap.url, {
+    const payload = `chapter://pair?url=${encodeURIComponent(snap.url)}`;
+    QRCode.toDataURL(payload, {
       width: 238,
       margin: 1,
       errorCorrectionLevel: "M",
@@ -266,25 +274,31 @@ export function TransferDialog({ bookPath, outline = null, onClose, onScan, onAp
 
   return (
     <div
-      className="backdrop"
+      className={pane ? "wb-pane wb-transfer" : `backdrop${isPhone ? " transfer-phone" : ""}`}
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) doClose();
+        if (!pane && e.target === e.currentTarget) doClose();
       }}
     >
-      <div className="modal glass transfer-modal" role="dialog" aria-modal="true">
+      <div
+        className={pane ? "transfer-pane-inner" : "modal glass transfer-modal"}
+        role="dialog"
+        aria-modal={pane ? undefined : true}
+      >
         <div className="modal-head transfer-head">
           <div>
-            <span className="transfer-eyebrow">CHAPTER / LOCAL TRANSFER</span>
+            {pane ? null : <span className="transfer-eyebrow">CHAPTER / LOCAL TRANSFER</span>}
             <h3>{snap ? (isPhone ? phonePhaseTitle(snap) : phaseTitle(snap)) : "手机互传"}</h3>
             <p>
               {isPhone
-                ? "同一个 Wi-Fi。用右上角的扫码键扫电脑二维码，或让电脑浏览器扫这里的码；书稿、漫画、打卡日历和界面改动一起同步。"
+                ? "同一个 Wi-Fi。电脑扫这个码后确认方向；书稿和漫画不经过云端。"
                 : "同一个 Wi-Fi，书稿不经过云端。先绑定手机，再由电脑确认方向；小说、漫画、打卡日历与偏好一起传。"}
             </p>
           </div>
-          <button className="icon-btn" onClick={onScan} title="扫码">
-            <Icon name="qr" size={17} />
-          </button>
+          {isPhone && (
+            <button className="icon-btn" onClick={onScan} title="扫码">
+              <Icon name="qr" size={17} />
+            </button>
+          )}
           <button className="icon-btn" onClick={doClose} title={locked ? "传输中不能退出" : "关闭"}>
             <Icon name="close" size={16} />
           </button>
@@ -358,7 +372,7 @@ export function TransferDialog({ bookPath, outline = null, onClose, onScan, onAp
                     {qr ? <img src={qr} alt="手机扫码" /> : <div className="transfer-qr-placeholder">生成二维码中…</div>}
                   </div>
                   <div className="transfer-qr-caption">
-                    <b>{isPhone ? "用电脑浏览器扫这个码" : "用手机相机扫这个码"}</b>
+                    <b>{isPhone ? "用电脑浏览器扫这个码" : "用手机上的 Chapter 扫码"}</b>
                     <span>
                       {isPhone
                         ? "电脑和这台手机必须在同一个 Wi-Fi。二维码 10 分钟内有效。"
@@ -433,7 +447,11 @@ export function TransferDialog({ bookPath, outline = null, onClose, onScan, onAp
                         <div>
                           <span>本次要传</span>
                           <b>
-                            {chosen ? `${chosen.count} 项 · ${fmtBytes(chosen.bytes)}` : "—"}
+                            {chosen
+                              ? chosen.count === 0
+                                ? "完全一致 · 仍可全量重传"
+                                : `${chosen.count} 项 · ${fmtBytes(chosen.bytes)}`
+                              : "—"}
                           </b>
                         </div>
                         <div>
@@ -535,9 +553,11 @@ export function TransferDialog({ bookPath, outline = null, onClose, onScan, onAp
                       {snap.phase === "ready" && (
                         <div className="transfer-actions">
                           <div>
-                            <b>确认后只传上面这些变化</b>
+                            <b>{chosen?.count === 0 ? "两边内容一致，仍要传一遍吗？" : "确认后只传上面这些变化"}</b>
                             <span>
-                              {snap.direction === "pc_to_phone"
+                              {chosen?.count === 0
+                                ? `当前方向：${snap.direction === "pc_to_phone" ? "电脑 → 手机" : "手机 → 电脑"}。会按整本书全量重传，不会因为“没区别”直接跳过。`
+                                : snap.direction === "pc_to_phone"
                                 ? "手机页面会收到 .chapterpack，导入后只合并变化。"
                                 : "手机会把变化包上传到电脑，电脑只覆盖这些内容。"}
                             </span>
@@ -547,10 +567,10 @@ export function TransferDialog({ bookPath, outline = null, onClose, onScan, onAp
                           </button>
                           <button
                             className="btn btn-primary"
-                            disabled={busy || !chosen || chosen.count === 0}
+                            disabled={busy || !chosen}
                             onClick={() => void confirm()}
                           >
-                            {chosen && chosen.count === 0 ? "没有变化" : "确认传输"}
+                            {chosen?.count === 0 ? "仍然全量传输" : "确认传输"}
                           </button>
                         </div>
                       )}

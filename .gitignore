@@ -40,3 +40,5 @@ ui.xml
 /flat-*.png
 /_*.png
 /intro-cover.png
+/Chapter_*.png
+/i18n-missing.txt

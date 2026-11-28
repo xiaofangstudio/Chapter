@@ -494,7 +494,11 @@ export type UiLanguage =
   | "bo"
   | "ug"
   | "mn"
-  | "za";
+  | "za"
+  | "cat"
+  | "luxun"
+  | "wenyan"
+  | "upside";
 
 export interface LanguageOption {
   key: UiLanguage;
@@ -565,6 +569,10 @@ export const LANGUAGES: LanguageOption[] = [
   { key: "ug", label: "ئۇيغۇرچە", english: "Uyghur", country: "China (Xinjiang)", countryZh: "中国（新疆）", codes: ["UG", "Uighur", "维吾尔语", "维吾尔文", "新疆"], dir: "rtl" },
   { key: "mn", label: "ᠮᠣᠩᠭᠣᠯ ᠬᠡᠯᠡ", english: "Mongolian", country: "China (Inner Mongolia) / Mongolia", countryZh: "中国（内蒙古）/ 蒙古国", codes: ["MN", "Mongol", "蒙古语", "蒙古文", "内蒙古"], dir: "ltr" },
   { key: "za", label: "Vahcuengh", english: "Zhuang", country: "China (Guangxi)", countryZh: "中国（广西）", codes: ["ZA", "ZHUANG", "壮语", "壮文", "广西"], dir: "ltr" },
+  { key: "cat", label: "萌猫语", english: "Cat Speak", country: "Cat Island", countryZh: "猫岛", codes: ["CAT", "MEOW", "LOLCAT", "萌猫", "猫语", "小猫"], dir: "ltr" },
+  { key: "luxun", label: "鲁迅语", english: "Lu Xun", country: "China (Shaoxing)", countryZh: "中国（绍兴）", codes: ["LUXUN", "鲁迅", "绍兴", "周树人"], dir: "ltr" },
+  { key: "wenyan", label: "文言文", english: "Classical Chinese", country: "China", countryZh: "中国", codes: ["WENYAN", "文言", "古文", "古汉语"], dir: "ltr" },
+  { key: "upside", label: "Upsidedown", english: "Upside Down", country: "Inverted Realm", countryZh: "倒悬国", codes: ["UPSIDE", "UPSIDEDOWN", "倒置", "倒过来", "倒字"], dir: "ltr" },
 ];
 
 const HANT_COUNTRY: Record<string, string> = {

@@ -19,9 +19,11 @@ import { t } from "../lib/i18n";
 import { api, errText } from "../lib/api";
 import { readScanRules, writeScanRules } from "../lib/split";
 import { DEFAULT_VOICE_MARKS, VOICE_MARKS } from "../lib/voice";
+import type { LocalProfile } from "../lib/profile";
 import { Icon } from "./Icon";
 import { LanguagePicker } from "./LanguagePicker";
 import { Logo } from "./Logo";
+import { UserAvatar } from "./UserWelcome";
 import { TreasureCard, TreasureChest } from "./TreasureChest";
 import { getVersion } from "@tauri-apps/api/app";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -54,6 +56,7 @@ export interface SettingsDialogProps {
   paper: PaperTexture;
   bgPath: string;
   library: string;
+  profile: LocalProfile;
   targetWords?: number;
   dailyGoal?: number;
   mcpEnabled: boolean;
@@ -69,6 +72,7 @@ export interface SettingsDialogProps {
   onLightEffect: (v: LightEffect) => void;
   onHomeMode: (v: HomeMode) => void;
   onLanguage: (v: UiLanguage) => void;
+  onProfile: (v: LocalProfile) => void;
   onPaper: (v: PaperTexture) => void;
   onPickBg: () => void;
   onClearBg: () => void;
@@ -117,6 +121,36 @@ async function copyText(text: string): Promise<boolean> {
       area.remove();
       return false;
     }
+  }
+}
+
+async function resizeAvatar(file: File): Promise<string> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error("这张图片读不出来"));
+      el.src = url;
+    });
+    const size = 256;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("头像处理失败");
+    const png = file.type === "image/png";
+    if (!png) {
+      ctx.fillStyle = "#f4efe4";
+      ctx.fillRect(0, 0, size, size);
+    }
+    const scale = Math.max(size / img.width, size / img.height);
+    const w = img.width * scale;
+    const h = img.height * scale;
+    ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+    return canvas.toDataURL(png ? "image/png" : "image/jpeg", 0.86);
+  } finally {
+    URL.revokeObjectURL(url);
   }
 }
 
@@ -653,9 +687,11 @@ function AboutPanel({ language }: { language: UiLanguage }) {
 
 export function SettingsDialog(props: SettingsDialogProps) {
   const isPhone = typeof window !== "undefined" && window.matchMedia("(max-width: 820px)").matches;
-  const sections = isPhone ? SECTIONS.filter((s) => s.key !== "git") : SECTIONS;
+  const sections = isPhone ? SECTIONS.filter((s) => s.key !== "git" && s.key !== "ai") : SECTIONS;
   const [section, setSection] = useState<Section>(
-    isPhone && props.initialSection === "git" ? "appearance" : (props.initialSection ?? "appearance"),
+    isPhone && (props.initialSection === "git" || props.initialSection === "ai")
+      ? "appearance"
+      : (props.initialSection ?? "appearance"),
   );
   const [version, setVersion] = useState("1.3.4");
   useEffect(() => {
@@ -676,6 +712,9 @@ export function SettingsDialog(props: SettingsDialogProps) {
   const [voiceActiveId, setVoiceActiveId] = useState<string | null>(null);
   const [voiceDownload, setVoiceDownload] = useState<{ id: string; progress: number } | null>(null);
   const [voiceError, setVoiceError] = useState("");
+  const [avatarError, setAvatarError] = useState("");
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const avatarInput = useRef<HTMLInputElement | null>(null);
   const [closing, setClosing] = useState(false);
   const closeTimer = useRef<number | undefined>(undefined);
   const requestClose = useCallback(() => {
@@ -713,6 +752,26 @@ export function SettingsDialog(props: SettingsDialogProps) {
     });
     setScanSaved(true);
     window.setTimeout(() => setScanSaved(false), 1600);
+  };
+
+  const patchProfile = (patch: Partial<LocalProfile>) => {
+    props.onProfile({ ...props.profile, ...patch });
+  };
+
+  const pickAvatarFile = async (file: File | undefined) => {
+    if (!file) return;
+    setAvatarError("");
+    setAvatarBusy(true);
+    try {
+      if (!file.type.startsWith("image/")) throw new Error("请选择图片文件");
+      if (file.size > 16 * 1024 * 1024) throw new Error("图片太大了，换一张小一点的");
+      const avatar = await resizeAvatar(file);
+      patchProfile({ avatar });
+    } catch (e) {
+      setAvatarError(errText(e));
+    } finally {
+      setAvatarBusy(false);
+    }
   };
 
   const loadVoiceModels = useCallback(async () => {
@@ -871,6 +930,100 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   </Row>
                   <Row label="语言" note="国家名、英文名、简写都能搜">
                     <LanguagePicker value={props.language} language={props.language} onChange={props.onLanguage} />
+                  </Row>
+                </div>
+
+                <div className="set-subhead set-profile-head">
+                  <h3>{t("作者名片")}</h3>
+                  <span>{t("只保存在这台设备")}</span>
+                </div>
+                <p className="set-note">{t("头像、名字、天气和温度都可以自己填。不上传，不联网。")}</p>
+
+                <div className="set-profile">
+                  <div className="set-profile-avatar">
+                    <UserAvatar profile={props.profile} size={68} />
+                    <input
+                      ref={avatarInput}
+                      className="set-avatar-input"
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = "";
+                        void pickAvatarFile(file);
+                      }}
+                    />
+                    <div className="set-profile-avatar-actions">
+                      <button className="btn btn-ghost btn-xs" onClick={() => avatarInput.current?.click()} disabled={avatarBusy}>
+                        <Icon name="image" size={13} />
+                        {avatarBusy ? t("处理中…") : t("换头像")}
+                      </button>
+                      {props.profile.avatar && (
+                        <button className="btn btn-ghost btn-xs" onClick={() => patchProfile({ avatar: null })}>
+                          {t("清除")}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="set-profile-fields">
+                    <label className="set-profile-field">
+                      <span>{t("显示名字")}</span>
+                      <input
+                        className="input"
+                        value={props.profile.name}
+                        maxLength={24}
+                        placeholder={t("小方工作室")}
+                        onChange={(e) => patchProfile({ name: e.target.value })}
+                      />
+                    </label>
+                    <div className="set-profile-pair">
+                      <label className="set-profile-field">
+                        <span>{t("天气")}</span>
+                        <input
+                          className="input"
+                          value={props.profile.weather}
+                          maxLength={16}
+                          placeholder={t("晴朗")}
+                          onChange={(e) => patchProfile({ weather: e.target.value })}
+                        />
+                      </label>
+                      <label className="set-profile-field">
+                        <span>{t("温度")}</span>
+                        <input
+                          className="input"
+                          value={props.profile.temperature}
+                          maxLength={8}
+                          placeholder="14"
+                          onChange={(e) => patchProfile({ temperature: e.target.value })}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                </div>
+                {avatarError && <p className="set-error">{avatarError}</p>}
+
+                <div className="set-group set-profile-switches">
+                  <Row label="显示头像" note="关掉后问候文字会自动靠左，不留空位">
+                    <Switch
+                      on={props.profile.showAvatar}
+                      onClick={() => patchProfile({ showAvatar: !props.profile.showAvatar })}
+                      label={t("显示头像")}
+                    />
+                  </Row>
+                  <Row label="用户欢迎语" note="时间问候 + 名字 + 天气温度 + emoji">
+                    <Switch
+                      on={props.profile.showGreeting}
+                      onClick={() => patchProfile({ showGreeting: !props.profile.showGreeting })}
+                      label={t("用户欢迎语")}
+                    />
+                  </Row>
+                  <Row label="写作提示语" note="下面那一句写作提醒，可以只要欢迎语">
+                    <Switch
+                      on={props.profile.showPrompts}
+                      onClick={() => patchProfile({ showPrompts: !props.profile.showPrompts })}
+                      label={t("写作提示语")}
+                    />
                   </Row>
                 </div>
               </div>

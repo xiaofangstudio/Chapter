@@ -57,7 +57,7 @@ type FontChoice = "song" | "hei" | "kai" | "fang" | "custom";
 
 const FONT_OPTIONS: { id: FontChoice; label: string; stack: string; sample: string }[] = [
   { id: "song", label: "宋体", stack: 'var(--font-serif)', sample: "一页纸，一段故事" },
-  { id: "hei", label: "黑体", stack: 'var(--font-sans)', sample: "一页纸，一段故事" },
+  { id: "hei", label: "黑体", stack: "var(--font-ui)", sample: "一页纸，一段故事" },
   { id: "kai", label: "楷体", stack: '"KaiTi", "STKaiti", "Kaiti SC", serif', sample: "一页纸，一段故事" },
   { id: "fang", label: "仿宋", stack: '"FangSong", "STFangsong", "FangSong_GB2312", serif', sample: "一页纸，一段故事" },
 ];
@@ -80,11 +80,21 @@ function installCustomFont(dataUrl: string) {
 function readFontChoice(): FontChoice {
   try {
     const raw = localStorage.getItem("chapter.editorFontFamily");
-    if (raw === "hei" || raw === "kai" || raw === "fang" || raw === "custom") return raw;
+    // 1.9.6 之前默认是“宋体”，老用户第一进编辑器就会被自动存成 song；
+    // 把这种历史默认迁到黑体一次，之后用户自己再选宋体仍会保留。
+    const migrated = localStorage.getItem("chapter.editorFontSans") === "1";
+    if (!migrated) {
+      localStorage.setItem("chapter.editorFontSans", "1");
+      if (!raw || raw === "song") {
+        localStorage.setItem("chapter.editorFontFamily", "hei");
+        return "hei";
+      }
+    }
+    if (raw === "hei" || raw === "song" || raw === "kai" || raw === "fang" || raw === "custom") return raw;
   } catch {
     /* 本机存储不可用 */
   }
-  return "song";
+  return "hei";
 }
 
 function fileStem(path: string) {

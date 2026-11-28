@@ -1,6 +1,6 @@
 # Chapter · 小方工作室小说写作器
 
-> **小方工作室 · 出品** ｜ 规格 `v1.8.0` ｜ 2026-11-26 ｜ 状态：Android 竖屏版已可安装，漫画支持当前页 / 当前话 / 整本整页 PNG 导出，新增本书词库校对、章内脚注、章节编号、场景板、封面设计器与关系图补强
+> **小方工作室 · 出品** ｜ 规格 `v1.9.10` ｜ 2026-11-28 ｜ 状态：语音输入（桌面本地 whisper / 安卓系统识别）、手机扫码互传、封面绘画工作室、扁平化界面、手机配对与本地档案均已落地
 > 对标 Scrivener ｜ 全中文（含 65 种语言与 RTL） ｜ 本地优先 ｜ 零账号 ｜ AI 走本机 MCP ｜ MIT
 >
 > 安装包与免安装 exe 见 [Releases](https://github.com/xiaofangstudio/Chapter/releases)：Windows 有安装版与便携版，Android 有 arm64 与 x86_64 正式签名 APK；Linux / macOS 本轮暂未重打。
@@ -146,6 +146,16 @@
 - 手机端补热区：漫画 Dock 固定浮层、打印 PDF / Word 44px、关系图长按代替右键、封面裁切改下方滑杆、副文本页签 44px、版本历史占满高度；设置与顶栏隐藏 Git / 版本回档桌面项。
 - Android「导入书稿」改走 WebView 文件选择 + Rust `read_import_bytes`，修掉 `content://` 找不到文件；导入页拆成「分章结果 / 原文」两页签，可长按标题补切点，TXT / Markdown / DOCX 均可用。
 - 互传白名单保留漫画工程；Android 实测互传页面 200、配对 200。
+
+## 二·十五 v1.9.0 – v1.9.10 语音、互传与扁平化
+
+- **v1.9.0 语音输入**：桌面走本地 whisper.cpp（插件 vendor 进仓库，模型放 `AppData\whisper-models`，走镜像下载），Android 用系统 SpeechRecognizer；启动语音先收键盘，听写途中可换落点、连续落字，手机补标点条。
+- **v1.9.1 手机 UI 修复**：顶部避让状态栏与摄像头孔（原生 `--sat` inset，CSS 兜底）、禁整页双指缩放、封面裁切恢复 3:4、聚焦页锁纵向滚动、手机留白回补。
+- **v1.9.2 扫码与全站互传**：应用内自绘扫码（`getUserMedia` + jsQR，不跳系统相机）、CAMERA 仅在打开扫码层时申请；互传包带 `sync-app.json`（打卡、主题、语言、界面偏好），接收端即时刷新。
+- **封面绘画工作室**：封面设计器接入绘画工作室，矢量与栅格双通道（`CoverVectorEditor` / `CoverRasterEditor`），矢量布尔用 `polygon-clipping`；新增 `cover-paint.css`。
+- **扁平化界面**：新增 `ui-flat.css`，只叠令牌与去装饰，金丝楠木主题保持不变；手机作品介绍页补 sheet / more / fab 结构，另加 `intro-frame` 预览入口。
+- **v1.9.9 本地档案**：`profile` 存昵称、头像、是否显示问候与提示、天气；新增欢迎页 `UserWelcome`，设置页可改头像与显示项。
+- **v1.9.10 手机配对与语气**：新增手机配对页 `PhonePairPage` 与手机选择桥 `MobileSelectBridge`；同步在两份内容完全一致时也按方向全量重传，不再以「没区别」拒绝传输；英文兜底 `i18n-en-fallback` 接住缺翻译的键；新增猫腔 / 鲁迅腔 / 文言 / 倒字四种性格化中文（运行时改写已写好的中文，不新增词典）。
 
 ## 三 后续分期
 

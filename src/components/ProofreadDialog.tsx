@@ -3,7 +3,7 @@ import type { ProofreadConfig, ProofreadIssue, ProofreadTerm } from "../types";
 import { pinyinPreview } from "../lib/proofread";
 import { t } from "../lib/i18n";
 import { Icon } from "./Icon";
-import { Modal } from "./Modals";
+import { Modal, ConfirmDialog } from "./Modals";
 
 const TERM_LIMIT = 300;
 
@@ -36,6 +36,7 @@ export function ProofreadDialog({
   const [search, setSearch] = useState("");
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [askClose, setAskClose] = useState(false);
   const [focusId, setFocusId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -96,11 +97,15 @@ export function ProofreadDialog({
   };
 
   const close = () => {
-    if (dirty && !window.confirm("词库还有未保存的改动，确定关闭？")) return;
+    if (dirty) {
+      setAskClose(true);
+      return;
+    }
     onClose();
   };
 
   return (
+    <>
     <Modal
       title={t("本书词库")}
       subtitle={t("本地校对，只按这本书的词库提示；不联网，不改正文。")}
@@ -334,6 +339,20 @@ export function ProofreadDialog({
         )}
       </div>
     </Modal>
+    {askClose && (
+      <ConfirmDialog
+        title={t("关闭词库？")}
+        message={t("词库还有未保存的改动，关闭后这次修改会丢失。")}
+        confirmText={t("关闭")}
+        danger
+        onClose={() => setAskClose(false)}
+        onOk={() => {
+          setAskClose(false);
+          onClose();
+        }}
+      />
+    )}
+    </>
   );
 }
 

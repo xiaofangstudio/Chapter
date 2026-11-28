@@ -706,11 +706,12 @@ interface BookMetaDialogProps {
     numbering?: NumberingRule;
     renames?: { id: string; title: string }[];
   }) => Promise<void> | void;
+  onDelete?: () => void;
 }
 
 const SPINE_SWATCHES = ["#6d4a2a", "#8a2f2a", "#26456b", "#2f5a44", "#4a3a63", "#1f1d1b"];
 
-export function BookMetaDialog({ meta, outline, onClose, onSave }: BookMetaDialogProps) {
+export function BookMetaDialog({ meta, outline, onClose, onSave, onDelete }: BookMetaDialogProps) {
   const [title, setTitle] = useState(meta.title);
   const [author, setAuthor] = useState(meta.author);
   const [description, setDescription] = useState(meta.description ?? "");
@@ -963,6 +964,19 @@ export function BookMetaDialog({ meta, outline, onClose, onSave }: BookMetaDialo
             {t("默认封面和自定义封面都可以单独改书脊颜色；切书页会立刻使用这个颜色。")}
           </div>
         </div>
+
+        {onDelete && (
+          <div className="bookmeta-danger">
+            <div>
+              <b>{t("删除这本书")}</b>
+              <span>{t("整本工程会移到书库的 .回收站，不会立刻销毁；需要时可以手动拿回来。")}</span>
+            </div>
+            <button className="btn btn-ghost bookmeta-danger-btn" onClick={onDelete}>
+              <Icon name="trash" size={15} />
+              {t("移到回收站")}
+            </button>
+          </div>
+        )}
       </div>
     </Modal>
   );

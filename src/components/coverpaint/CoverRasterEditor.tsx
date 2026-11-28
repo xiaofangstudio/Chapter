@@ -6,8 +6,8 @@ import {
   useState,
 } from "react";
 import { createSurface, mustCtx } from "../../lib/paint/surface";
+import { ConfirmDialog } from "../Modals";
 import type { PaintDims } from "./CoverPaintStudio";
-import { StudioStatusBar } from "./StudioStatusBar";
 import { Stroke, DEFAULT_BRUSH, type BrushSettings, type BrushTip, type BrushTexture } from "./engine/strataPaint";
 
 type Tool =
@@ -299,6 +299,7 @@ export function CoverRasterEditor({
   const [panel, setPanel] = useState<"brush" | "layers" | "adjust">("brush");
   const [sheet, setSheet] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [leaveAsk, setLeaveAsk] = useState(false);
   const [brightness, setBrightness] = useState(0);
   const [contrast, setContrast] = useState(0);
   const [saturate, setSaturate] = useState(0);
@@ -1537,7 +1538,10 @@ export function CoverRasterEditor({
   };
 
   const leave = () => {
-    if (histRef.current.length > 0 && !window.confirm("返回会丢失当前画稿，确定离开画室？")) return;
+    if (histRef.current.length > 0) {
+      setLeaveAsk(true);
+      return;
+    }
     onClose();
   };
 
@@ -1748,7 +1752,6 @@ export function CoverRasterEditor({
 
   return (
     <div className={`cps-root cpr-root${sheet ? " sheet-open" : ""}`}>
-      <StudioStatusBar />
       <header className="cpr-head">
         <button className="cps-icon-btn" onClick={leave} aria-label="返回">
           <svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7" /></svg>
@@ -1816,6 +1819,20 @@ export function CoverRasterEditor({
       </footer>
 
       <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) importImage(f); e.target.value = ""; }} />
+
+      {leaveAsk && (
+        <ConfirmDialog
+          title="离开画室？"
+          message="当前画稿还没有用作封面，离开后这一笔记录不会保留。"
+          confirmText="离开"
+          danger
+          onClose={() => setLeaveAsk(false)}
+          onOk={() => {
+            setLeaveAsk(false);
+            onClose();
+          }}
+        />
+      )}
     </div>
   );
 }

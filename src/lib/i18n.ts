@@ -11,6 +11,8 @@ import { WORLD_STATS_PACKS } from "./i18n-world-stats";
 import { WORLD_RELATIVE_PACKS } from "./i18n-world-relative";
 import { ZH_HANT } from "./i18n-zh-hant";
 import { NEW_PACKS } from "./i18n-new";
+import { EN_FALLBACK } from "./i18n-en-fallback";
+import { isStyledLanguage, styleText } from "./i18n-style";
 
 type Pack = Record<string, string>;
 
@@ -1134,6 +1136,7 @@ function rebuildPacks(auto: Record<string, Pack> = {}, extra: Record<string, Pac
       ...(lang === "zhTW" ? ZH_HANT : {}),
       ...(BASE_PACKS[lang as keyof typeof BASE_PACKS] ?? {}),
     };
+    if (lang === "en") packs.en = { ...EN_FALLBACK, ...packs.en };
   });
 }
 rebuildPacks();
@@ -1141,7 +1144,7 @@ rebuildPacks();
 let autoLoaded = false;
 /** 首次切到非中文时懒加载大词典；之后所有语言共用同一份已加载结果。 */
 export async function ensureUiPack(lang: UiLanguage): Promise<void> {
-  if (lang === "zh" || lang === "zhTW" || autoLoaded) return;
+  if (lang === "zh" || lang === "zhTW" || isStyledLanguage(lang) || autoLoaded) return;
   const [autoMod, extraMod] = await Promise.all([import("./i18n-auto"), import("./i18n-extra")]);
   rebuildPacks(autoMod.AUTO_PACKS as Record<string, Pack>, extraMod.EXTRA_PACKS as Record<string, Pack>);
   autoLoaded = true;
@@ -1215,6 +1218,10 @@ const LOCALE_TAGS: Partial<Record<UiLanguage, string>> = {
   ug: "ug-CN",
   mn: "mn-MN",
   za: "za-CN",
+  cat: "zh-CN",
+  luxun: "zh-CN",
+  wenyan: "zh-CN",
+  upside: "zh-CN",
 };
 
 const dateFormatters = new Map<string, Intl.DateTimeFormat>();
@@ -1247,6 +1254,7 @@ export function fmtDateTime(value: number | string | Date): string {
 
 export function t(text: string): string {
   if (current === "zh") return text;
+  if (isStyledLanguage(current)) return styleText(current, text);
   return packs[current]?.[text] ?? packs.en[text] ?? text;
 }
 

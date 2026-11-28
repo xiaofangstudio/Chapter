@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { BookMeta, Chapter, Outline } from "../types";
 import { fmtWords } from "../lib/text";
 import { fmtDateTime, t } from "../lib/i18n";
+import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { Icon } from "./Icon";
 import { Logo } from "./Logo";
 import { NovelCover } from "./NovelCover";
@@ -24,6 +25,9 @@ interface Props {
   onSettings: () => void;
   onAddVolume: () => void;
   onAddChapter?: (volumeId: string) => void;
+  onRenameChapter?: (id: string) => void;
+  onDeleteChapter?: (id: string) => void;
+  onMoveChapter?: (id: string, toVolumeId: string, beforeId: string | null) => void;
 }
 
 export function BookIntroPage(props: Props) {
@@ -58,11 +62,19 @@ export function BookIntroPage(props: Props) {
     null;
   const [openVolume, setOpenVolume] = useState<string | null>(volumeOfActive);
   const [mobileTab, setMobileTab] = useState<"chapters" | "info">("chapters");
-  const [mobileVolume, setMobileVolume] = useState("all");
+  // 手机默认只看当前所在的那一卷；分卷面板不再把全部卷和章节数堆在一个原生下拉里。
+  const [mobileVolume, setMobileVolume] = useState<string>(volumeOfActive ?? outline.volumes[0]?.id ?? "");
+  const [volumeOpen, setVolumeOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [q, setQ] = useState("");
   const [sortDesc, setSortDesc] = useState(true);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [chapterMenu, setChapterMenu] = useState<{
+    x: number;
+    y: number;
+    ch: Chapter;
+    volumeId: string;
+  } | null>(null);
   const pageRef = useRef<HTMLDivElement | null>(null);
   const [compactHead, setCompactHead] = useState(false);
 
@@ -79,8 +91,8 @@ export function BookIntroPage(props: Props) {
     null;
 
   useEffect(() => {
-    if (mobileVolume !== "all" && !outline.volumes.some((v) => v.id === mobileVolume)) {
-      setMobileVolume("all");
+    if (!outline.volumes.some((v) => v.id === mobileVolume)) {
+      setMobileVolume(outline.volumes[0]?.id ?? "");
     }
   }, [mobileVolume, outline.volumes]);
 
@@ -111,10 +123,33 @@ export function BookIntroPage(props: Props) {
   const mobileRows = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return indexedFlat
-      .filter((row) => mobileVolume === "all" || row.volumeId === mobileVolume)
+      .filter((row) => row.volumeId === mobileVolume)
       .filter((row) => !needle || `${row.ch.title} ${row.ch.summary} ${row.volumeTitle}`.toLowerCase().includes(needle))
       .sort((a, b) => (sortDesc ? b.no - a.no : a.no - b.no));
   }, [indexedFlat, mobileVolume, q, sortDesc]);
+
+  const chapterMenuItems = (ch: Chapter, volumeId: string): MenuItem[] => {
+    const otherVolume = outline.volumes.find((v) => v.id !== volumeId);
+    return [
+      { label: t("打开这一章"), icon: "book", onClick: () => props.onSelectChapter(ch.id) },
+      { label: t("重命名章节"), icon: "edit", onClick: () => props.onRenameChapter?.(ch.id) },
+      ...(otherVolume && props.onMoveChapter
+        ? [
+            {
+              label: `移到「${otherVolume.title || t("其他卷")}」`,
+              icon: "folder" as const,
+              onClick: () => props.onMoveChapter?.(ch.id, otherVolume.id, null),
+            },
+          ]
+        : []),
+      {
+        label: t("删除这一章"),
+        icon: "trash",
+        danger: true,
+        onClick: () => props.onDeleteChapter?.(ch.id),
+      },
+    ];
+  };
 
   return (
     <div className={`book-intro${compactHead ? " has-compact-head" : ""}`} ref={pageRef}>
@@ -300,17 +335,18 @@ export function BookIntroPage(props: Props) {
                   </span>
                 </div>
                 <div className="intro-m-tools">
-                  <label className="intro-m-volume">
-                    <select value={mobileVolume} onChange={(e) => setMobileVolume(e.target.value)}>
-                      <option value="all">{t("全部卷")} · {flat.length}{comic ? t("话") : t("章")}</option>
-                      {outline.volumes.map((vol, vi) => (
-                        <option key={vol.id} value={vol.id}>
-                          {vol.title || `${t("第")}${vi + 1}${t("卷")}`} · {vol.chapters.length}
-                        </option>
-                      ))}
-                    </select>
+                  <button
+                    type="button"
+                    className="intro-m-volume"
+                    aria-haspopup="dialog"
+                    aria-expanded={volumeOpen}
+                    onClick={() => setVolumeOpen(true)}
+                  >
+                    <span>
+                      {outline.volumes.find((v) => v.id === mobileVolume)?.title || t("选择分卷")}
+                    </span>
                     <Icon name="chevron" size={13} />
-                  </label>
+                  </button>
                   <button className="intro-m-sort" onClick={() => setSortDesc((v) => !v)}>
                     {sortDesc ? t("倒序") : t("正序")}
                   </button>
@@ -341,7 +377,7 @@ export function BookIntroPage(props: Props) {
                     <span>{q ? t("换个关键词试试。") : t("去写作页新建一章。")}</span>
                     <button
                       className="btn btn-primary btn-sm"
-                      onClick={() => props.onAddChapter?.(mobileVolume === "all" ? outline.volumes[0]?.id ?? "" : mobileVolume)}
+                      onClick={() => props.onAddChapter?.(mobileVolume || outline.volumes[0]?.id || "")}
                     >
                       <Icon name="plus" size={14} />
                       {t("新建一章")}
@@ -353,6 +389,10 @@ export function BookIntroPage(props: Props) {
                       key={row.ch.id}
                       className={`intro-m-chapter${row.ch.id === activeId ? " current" : ""}`}
                       onClick={() => props.onSelectChapter(row.ch.id)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        setChapterMenu({ x: e.clientX, y: e.clientY, ch: row.ch, volumeId: row.volumeId });
+                      }}
                     >
                       <span className="intro-m-chapter-main">
                         <b>{row.ch.title || t("未命名")}</b>
@@ -465,6 +505,10 @@ export function BookIntroPage(props: Props) {
                               key={ch.id}
                               className={`intro-chapter${ch.id === activeId ? " current" : ""}`}
                               onClick={() => props.onSelectChapter(ch.id)}
+                              onContextMenu={(e) => {
+                                e.preventDefault();
+                                setChapterMenu({ x: e.clientX, y: e.clientY, ch, volumeId: vol.id });
+                              }}
                             >
                               <span className="intro-chapter-no">
                                 {String(firstIndex + ci + 1).padStart(2, "0")}
@@ -489,6 +533,33 @@ export function BookIntroPage(props: Props) {
           )}
         </section>
       </main>
+
+      {volumeOpen && (
+        <div className="intro-sheet-layer">
+          <button className="intro-sheet-scrim" aria-label={t("关闭")} onClick={() => setVolumeOpen(false)} />
+          <div className="intro-sheet intro-volume-sheet" role="dialog" aria-modal="true">
+            <div className="intro-sheet-head">
+              <b>{t("选择分卷")}</b>
+              <button aria-label={t("关闭")} onClick={() => setVolumeOpen(false)}>
+                <Icon name="close" size={16} />
+              </button>
+            </div>
+            {outline.volumes.map((vol, vi) => (
+              <button
+                key={vol.id}
+                className={`intro-volume-option${mobileVolume === vol.id ? " on" : ""}`}
+                onClick={() => {
+                  setMobileVolume(vol.id);
+                  setVolumeOpen(false);
+                }}
+              >
+                <span>{vol.title || `${t("第")}${vi + 1}${t("卷")}`}</span>
+                {mobileVolume === vol.id && <Icon name="check" size={16} />}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {moreOpen && (
         <div className="intro-sheet-layer">
@@ -519,6 +590,15 @@ export function BookIntroPage(props: Props) {
             <button className="intro-sheet-cancel" onClick={() => setMoreOpen(false)}>{t("取消")}</button>
           </div>
         </div>
+      )}
+
+      {chapterMenu && (
+        <ContextMenu
+          x={chapterMenu.x}
+          y={chapterMenu.y}
+          items={chapterMenuItems(chapterMenu.ch, chapterMenu.volumeId)}
+          onClose={() => setChapterMenu(null)}
+        />
       )}
     </div>
   );

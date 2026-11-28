@@ -3815,6 +3815,13 @@ fn stop_mcp_server() {
 #[tauri::command]
 fn mcp_set_enabled(app: tauri::AppHandle, enabled: bool, port: u16) -> Result<McpStatus, String> {
     MCP_PORT.store(port, Ordering::Relaxed);
+    // 手机端不承载 MCP：设置里已隐藏入口，后端也必须拒绝启动，
+    // 否则旧配置或互传过来的工程仍会在 Android 上开 18765 端口。
+    if cfg!(target_os = "android") {
+        stop_mcp_server();
+        *MCP_ERROR.lock().unwrap() = None;
+        return Ok(mcp_status_inner());
+    }
     if enabled {
         if let Err(e) = start_mcp_server(app, port) {
             *MCP_ERROR.lock().unwrap() = Some(e);
@@ -4792,11 +4799,15 @@ pub fn run() {
                 let _ = window.set_background_color(Some(tauri::window::Color(250, 245, 236, 255)));
             }
             // 上次开着 MCP 就自动恢复，避免用户重启 Chapter 后 AI 连不上。
-            if let Ok(raw) = fs::read_to_string(mcp_config_path()) {
-                if let Ok(v) = serde_json::from_str::<Value>(&raw) {
-                    if v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(false) {
-                        let port = v.get("port").and_then(|x| x.as_u64()).unwrap_or(18765) as u16;
-                        let _ = start_mcp_server(app.handle().clone(), port);
+            // Android 没有本机 AI 客户端场景，不自动恢复，避免设置里已经隐藏、
+            // 后台却还在监听 18765。
+            if !cfg!(target_os = "android") {
+                if let Ok(raw) = fs::read_to_string(mcp_config_path()) {
+                    if let Ok(v) = serde_json::from_str::<Value>(&raw) {
+                        if v.get("enabled").and_then(|x| x.as_bool()).unwrap_or(false) {
+                            let port = v.get("port").and_then(|x| x.as_u64()).unwrap_or(18765) as u16;
+                            let _ = start_mcp_server(app.handle().clone(), port);
+                        }
                     }
                 }
             }
@@ -4868,6 +4879,8 @@ pub fn run() {
             sync::transfer_confirm,
             sync::transfer_cancel,
             sync::transfer_close,
+            sync::sync_manifest,
+            sync::export_chapterpack,
             sync::import_chapterpack
         ])
         .run(tauri::generate_context!())
